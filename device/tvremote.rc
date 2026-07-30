@@ -1,0 +1,8 @@
+service tvremote /system/bin/sh /data/local/tmp/tvremote/boot.sh
+    class late_start
+    user root
+    group root
+    seclabel u:r:su:s0
+
+on property:sys.boot_completed=1
+    start tvremote

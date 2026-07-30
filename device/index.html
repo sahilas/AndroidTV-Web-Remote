@@ -1,0 +1,39 @@
+<!doctype html><html><head>
+<meta name=viewport content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name=apple-mobile-web-app-capable content=yes>
+<meta name=apple-mobile-web-app-status-bar-style content=black>
+<title>TV Remote</title><style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+body{margin:0;background:#111;font-family:-apple-system,sans-serif;color:#eee;
+ display:flex;flex-direction:column;align-items:center;padding:20px 12px;gap:14px}
+h1{font-size:15px;color:#888;font-weight:500;margin:4px 0 8px}
+.row{display:flex;gap:12px;justify-content:center;width:100%;max-width:320px}
+button{flex:1;border:0;border-radius:14px;background:#2a2a2e;color:#eee;
+ font-size:18px;padding:18px 0;font-weight:600}
+button:active{background:#0a84ff;transform:scale(.96)}
+.dpad{width:230px;height:230px;position:relative;margin:6px auto}
+.dpad button{position:absolute;width:76px;height:76px;padding:0;font-size:22px}
+#up{top:0;left:77px}#down{bottom:0;left:77px}#left{top:77px;left:0}
+#right{top:77px;right:0}#ok{top:77px;left:77px;background:#0a84ff;border-radius:50%}
+.pill{background:#1c1c1e}.pw{background:#5a1e1e}.pw:active{background:#ff3b30}
+</style></head><body>
+<h1>Projector &middot; on-device</h1>
+<div class=row><button class=pw onclick="k('power')">&#9211;</button>
+ <button class=pill onclick="k('home')">Home</button>
+ <button class=pill onclick="k('back')">Back</button></div>
+<div class=dpad>
+ <button id=up onclick="k('up')">&#9650;</button>
+ <button id=left onclick="k('left')">&#9664;</button>
+ <button id=ok onclick="k('ok')">OK</button>
+ <button id=right onclick="k('right')">&#9654;</button>
+ <button id=down onclick="k('down')">&#9660;</button></div>
+<div class=row><button class=pill onclick="k('menu')">Menu</button>
+ <button class=pill onclick="k('mute')">&#128263;</button></div>
+<div class=row><button onclick="k('voldown')">Vol &minus;</button>
+ <button onclick="k('volup')">Vol +</button></div>
+<div class=row><button class=pill onclick="k('prev')">&#9198;</button>
+ <button class=pill onclick="k('play')">&#9199;</button>
+ <button class=pill onclick="k('next')">&#9197;</button></div>
+<script>function k(n){navigator.vibrate&&navigator.vibrate(8);
+ fetch('/cgi-bin/k?'+n).catch(function(){});}</script>
+</body></html>

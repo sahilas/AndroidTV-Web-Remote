@@ -1,0 +1,12 @@
+#!/system/bin/sh
+# busybox httpd CGI: map ?name -> android keycode -> inject locally (runs as root)
+q="$QUERY_STRING"
+case "$q" in
+  up)      c=19 ;;  down)  c=20 ;;  left) c=21 ;;  right) c=22 ;;  ok) c=23 ;;
+  back)    c=4  ;;  home)  c=3  ;;  menu) c=82 ;;  power) c=26 ;;
+  volup)   c=24 ;;  voldown) c=25 ;; mute) c=164 ;;
+  play)    c=85 ;;  prev)  c=88 ;;  next) c=87 ;; rewind) c=89 ;; ff) c=90 ;;
+  *) printf 'HTTP/1.0 400 Bad\r\nContent-Length: 3\r\nConnection: close\r\n\r\nno\n'; exit 0 ;;
+esac
+input keyevent "$c" >/dev/null 2>&1
+printf 'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\nConnection: close\r\n\r\nok\n'
