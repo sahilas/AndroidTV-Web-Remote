@@ -24,11 +24,11 @@ adb -s "$TV" push "$HERE/device/index.html" "$REMOTE/index.html"
 adb -s "$TV" push "$HERE/device/cgi-bin/."  "$REMOTE/cgi-bin/"    # all CGIs
 adb -s "$TV" push "$HERE/device/boot.sh"    "$REMOTE/boot.sh"
 adb -s "$TV" push "$HERE/device/bin/tlsproxy" "$REMOTE/bin/tlsproxy"
-adb -s "$TV" push "$HERE/device/cert.pem"   "$REMOTE/cert.pem"
+adb -s "$TV" push "$HERE/device/cert.pem"   "$REMOTE/cert.pem"   # fullchain: leaf + CA
 adb -s "$TV" push "$HERE/device/key.pem"    "$REMOTE/key.pem"
-adb -s "$TV" push "$HERE/device/cert.crt"   "$REMOTE/cert.crt"   # for iPhone download
-adb -s "$TV" shell "chmod 755 $REMOTE/cgi-bin/* $REMOTE/boot.sh $REMOTE/bin/tlsproxy; \
-  chmod 644 $REMOTE/index.html $REMOTE/cert.pem $REMOTE/cert.crt; chmod 600 $REMOTE/key.pem"
+adb -s "$TV" push "$HERE/device/ca.crt"     "$REMOTE/ca.crt"     # CA for iPhone to trust
+adb -s "$TV" shell "rm -f $REMOTE/cert.crt; chmod 755 $REMOTE/cgi-bin/* $REMOTE/boot.sh $REMOTE/bin/tlsproxy; \
+  chmod 644 $REMOTE/index.html $REMOTE/cert.pem $REMOTE/ca.crt; chmod 600 $REMOTE/key.pem"
 
 echo ">> install boot service /vendor/etc/init/tvremote.rc"
 adb -s "$TV" push "$HERE/device/tvremote.rc" /vendor/etc/init/tvremote.rc
@@ -54,9 +54,10 @@ echo "   http://$IP:$PORT/    -> HTTP $h"
 echo "   https://$IP:$HTTPS/  -> HTTP $s"
 if [ "$h" = 200 ] && [ "$s" = 200 ]; then
   echo "OK."
-  echo "iPhone (one-time): open  http://$IP:$PORT/cert.crt  in Safari -> install profile,"
-  echo "  then Settings > General > About > Certificate Trust Settings -> enable it."
-  echo "Then open  https://$IP:$HTTPS/  in Safari -> Add to Home Screen (fullscreen)."
+  echo "iPhone (one-time): DELETE any old 'Projector Remote' profile first, then:"
+  echo "  1) Safari -> http://$IP:$PORT/ca.crt  -> install the 'Projector Remote Local CA' profile"
+  echo "  2) Settings > General > About > Certificate Trust Settings -> turn it ON"
+  echo "  3) force-quit Safari, then open  https://$IP:$HTTPS/  -> Add to Home Screen (fullscreen)"
 else
   echo "FAILED (see: ./logs.sh)"; exit 1
 fi

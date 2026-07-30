@@ -2,5 +2,10 @@ device/**/httpd.log
 *.log
 .DS_Store
 device/key.pem
+device/ca.key
+device/leaf.key
+device/leaf.pem
+device/*.srl
+device/*.csr
 device/bin/tlsproxy
 tls-proxy/go.sum

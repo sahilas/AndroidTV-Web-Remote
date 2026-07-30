@@ -16,17 +16,24 @@ The page **is** `apple-mobile-web-app-capable`, so "Add to Home Screen" launches
 standalone app. That standalone WebView refuses plain HTTP (ATS / "HTTPS-only"), so we serve
 HTTPS: a tiny Go **TLS reverse proxy** (`tls-proxy/main.go`, static armv7 binary at
 `device/bin/tlsproxy`) listens on **:8443** and forwards to the busybox httpd on `127.0.0.1:8790`.
-The cert is self-signed with the projector's IP in SAN (`gen-cert.sh`; iOS-valid: SAN + serverAuth
-EKU + <825-day validity).
 
-**iPhone one-time trust (required, else the standalone app can't load the self-signed cert):**
-1. In Safari open `http://192.168.220.53:8790/cert.crt` → tap through → "Profile Downloaded".
-2. Settings → General → VPN & Device Management → install the "Projector Remote" profile.
-3. Settings → General → About → **Certificate Trust Settings** → toggle it **ON** (this full-trust
-   step is mandatory for self-signed certs; the app silently fails without it).
-4. Open `https://192.168.220.53:8443` in Safari → Share → **Add to Home Screen**. Fullscreen now works.
+TLS material (`gen-cert.sh`) is a **local CA + short-lived leaf**, not a bare self-signed cert —
+iOS rejects a self-signed cert that is `CA:TRUE` used as a server leaf. So:
+- **CA** (`ca.pem`, CN "Projector Remote Local CA", `CA:TRUE`, `keyCertSign`) — installed + trusted on the phone.
+- **leaf** (`CA:FALSE`, `serverAuth`, SAN `IP:192.168.220.53`, 397 days) signed by the CA.
+- Proxy serves the **fullchain** (`cert.pem` = leaf then CA). Verified against Apple's own
+  evaluator: `security verify-cert -c leaf.pem -r ca.pem -p ssl -s 192.168.220.53` → success, so
+  Apple's SSL policy accepts the IP SAN (no hostname needed).
 
-To renew/re-issue the cert: `./gen-cert.sh && ./deploy.sh`, then repeat the iPhone trust steps.
+**iPhone one-time trust (required — "Not Secure" = this wasn't completed):**
+1. **Delete any old "Projector Remote" profile** (Settings → General → VPN & Device Management).
+2. Safari → `http://192.168.220.53:8790/ca.crt` → tap through → install the **"Projector Remote Local CA"** profile.
+3. Settings → General → About → **Certificate Trust Settings** → toggle it **ON** (mandatory; the
+   app silently fails as "Not Secure" without it).
+4. **Force-quit Safari** (WebKit caches cert failures), then open `https://192.168.220.53:8443` →
+   Share → **Add to Home Screen**. Fullscreen.
+
+Leaf renewal (`./gen-cert.sh && ./deploy.sh`) needs **no** re-trust as long as the CA is unchanged.
 - **Runs on:** the projector (busybox `httpd` + a CGI that injects key events as root)
 - **Boot-persistent:** yes — an Android `init` service starts and supervises it
 
@@ -72,8 +79,10 @@ on the projector that turns button taps into local key events.
 | `device/boot.sh` | launcher run by init; waits for `/data`+cert, starts busybox httpd (:8790), then `exec`s the TLS proxy (:8443). |
 | `device/tvremote.rc` | Android init service; starts `boot.sh` on `sys.boot_completed=1`, seclabel `u:r:su:s0`. |
 | `tls-proxy/main.go` | Go HTTPS reverse proxy (:8443 → 127.0.0.1:8790). Cross-compiles to `device/bin/tlsproxy` (static armv7). |
-| `device/cert.pem`,`key.pem`,`cert.crt` | self-signed TLS cert/key (+ `.crt` for the iPhone to download). Key is gitignored; regenerate with `gen-cert.sh`. |
-| `gen-cert.sh` | (re)generate the cert with the projector IP in SAN. |
+| `device/cert.pem` | fullchain (leaf + CA) served by the proxy. Committed (public). |
+| `device/ca.crt` | the CA cert the iPhone downloads + trusts. Committed (public). |
+| `device/ca.key`,`key.pem`,`leaf.*` | private keys / leaf — **gitignored**; regenerate with `gen-cert.sh`. |
+| `gen-cert.sh` | (re)generate CA (once) + leaf (IP SAN, 397d). |
 | `deploy.sh` | push everything, set perms/SELinux contexts, (re)start. **Idempotent — this is how you update.** |
 | `restart.sh` | restart the running server, no redeploy. |
 | `uninstall.sh` | remove service + files. |
