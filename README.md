@@ -6,7 +6,13 @@ projector** (Zeasn Whale OS), served **from the projector itself** over its own
 Google account, no companion PC.
 
 - **Remote URL:** `http://192.168.220.53:8790` (iPhone: Safari → Share → *Add to Home Screen*)
-- **Two modes** (tabs at top, remembered per phone): **Keys** (D-pad/media) and **Touchpad** (tap = click, drag = scroll). A keyboard bar is shared by both.
+- **Two modes** (tabs at top, remembered per phone): **Keys** (D-pad/media) and **Touchpad** (air-mouse: drag = move cursor, tap = click, 2-finger = scroll). A keyboard bar is shared by both.
+- **iOS home-screen note:** the page is served over plain HTTP. It is deliberately **not**
+  `apple-mobile-web-app-capable`, because that flag makes the home-screen icon open a standalone
+  WebView that blocks HTTP ("HTTPS-only"/ATS). Without it the icon opens in **Safari**, where HTTP
+  works — the trade-off is you see Safari's chrome instead of a fullscreen app. True fullscreen
+  would require serving HTTPS (this box has no TLS tooling, so that'd mean shipping a TLS proxy +
+  installing a trusted cert profile on the phone — not done).
 - **Runs on:** the projector (busybox `httpd` + a CGI that injects key events as root)
 - **Boot-persistent:** yes — an Android `init` service starts and supervises it
 
@@ -85,20 +91,16 @@ and restarts via `ctl.restart` (no reboot).
 Two tabs at the top switch the controls (choice is saved per phone via `localStorage`):
 
 - **Keys** — power/home/back, D-pad + OK, menu/mute, volume, media transport. Uses `cgi-bin/k`.
-- **Touchpad** — has its own sub-toggle (**Direct touch** / **Air-mouse**), saved per phone:
-  - **Direct touch** — surface mapped 1:1 to the TV's 1920×1080 screen. **Tap = click** at
-    that spot (`input tap`), **drag = scroll/swipe** (`input swipe`). Tap where you want; no
-    cursor needed. Best in touch-aware apps (TV Bro, mpv, webviews, streaming apps).
-  - **Air-mouse** — moves the box's real hardware cursor relatively (like a laptop trackpad).
-    **Drag = move cursor**, **tap = left-click**, **2-finger drag = wheel scroll**; there's also
-    a **Click** button. Works because this box has a real mouse HID ("Hi mouse"); we inject
-    `REL_X/REL_Y`/`BTN_MOUSE`/`REL_WHEEL` via `sendevent` (NOT `input roll` — that source does
-    nothing here). The cursor is rendered by the OS, so use this in any app.
-  - Both use `cgi-bin/m`. Home/Back/OK buttons sit below.
+- **Touchpad** — a relative **air-mouse** that moves the box's real hardware cursor (like a
+  laptop trackpad). **Drag = move cursor**, **tap = left-click**, **2-finger drag = wheel
+  scroll**; plus **Click** and Home/Back/OK buttons below. Works because this box has a real
+  mouse HID ("Hi mouse"); we inject `REL_X/REL_Y`/`BTN_MOUSE`/`REL_WHEEL` via `sendevent` (NOT
+  `input roll` — that source does nothing here). Cursor is OS-rendered, so it works in any app.
 
 Air-mouse sensitivity is the `ROLL` constant in `index.html` (default 2.2). Moves are batched
 ~40 ms client-side to keep the HTTP chatter down. The mouse device node is auto-resolved by
 name from `/proc/bus/input/devices` and cached in `.mouseev`, so it survives reboots/renumbering.
+(The `m` CGI still accepts `tap`/`swipe` for absolute touch, unused by the current UI.)
 
 ## Keyboard & voice (dictation) input
 

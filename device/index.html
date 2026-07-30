@@ -1,8 +1,9 @@
 <!doctype html><html><head>
 <meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,user-scalable=no">
-<meta name=apple-mobile-web-app-capable content=yes>
-<meta name=apple-mobile-web-app-status-bar-style content=black>
+<!-- NOTE: intentionally NOT apple-mobile-web-app-capable. That makes the
+     home-screen icon open a standalone WebView which blocks plain HTTP (ATS /
+     "HTTPS-only"). Without it the icon opens in Safari, where HTTP works. -->
 <title>TV Remote</title><style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
 body{margin:0;background:#111;font-family:-apple-system,sans-serif;color:#eee;
@@ -64,16 +65,12 @@ button:active{background:#0a84ff;transform:scale(.96)}
   <button class=pill onclick="k('next')">&#9197;</button></div>
 </div>
 
-<!-- ===== TOUCHPAD MODE ===== -->
+<!-- ===== TOUCHPAD MODE (air-mouse) ===== -->
 <div id=pad>
- <div class=sub>
-  <button id=subDirect class=on onclick="pad('direct')">Direct&nbsp;touch</button>
-  <button id=subAir onclick="pad('air')">Air-mouse</button>
- </div>
- <div id=surface class=surface></div>
+ <div id=surface class=surface>Drag = move cursor &middot; tap = click<br>2-finger drag = scroll</div>
  <div class=row><button class=pill onclick="k('home')">Home</button>
   <button class=pill onclick="k('back')">Back</button>
-  <button id=clickBtn class=pill style="display:none" onclick="mclick()">Click</button>
+  <button class=pill onclick="mclick()">Click</button>
   <button class=pill onclick="k('ok')">OK</button></div>
 </div>
 
@@ -108,59 +105,32 @@ function mode(m){
 }
 try{mode(localStorage.getItem('mode')||'keys');}catch(e){mode('keys');}
 
-/* touchpad sub-mode: direct (absolute tap/swipe) vs air (relative cursor) */
-var airmode=false;
-function pad(p){
- airmode=(p==='air');
- document.getElementById('subDirect').className=airmode?'':'on';
- document.getElementById('subAir').className=airmode?'on':'';
- document.getElementById('clickBtn').style.display=airmode?'':'none';
- document.getElementById('surface').textContent=airmode
-   ? 'Drag = move cursor · tap = click · 2-finger drag = scroll'
-   : 'Tap = click · drag = scroll (maps to the TV screen)';
- try{localStorage.setItem('pad',p);}catch(e){}
-}
+/* touchpad = relative air-mouse: drag moves the real cursor, tap clicks, 2-finger scrolls */
 function mclick(){buzz();fetch('/cgi-bin/m?click=1').catch(function(){});}
-
 (function(){
  var s=document.getElementById('surface');
- var sx,sy,lx,ly,moved,twoF;
+ var lx,ly,moved,twoF;
  var ROLL=2.2;                       // air-mouse sensitivity
  var dx=0,dy=0,flushT=null;          // accumulated relative delta
- function nx(t){var r=s.getBoundingClientRect();return Math.min(1,Math.max(0,(t.clientX-r.left)/r.width));}
- function ny(t){var r=s.getBoundingClientRect();return Math.min(1,Math.max(0,(t.clientY-r.top)/r.height));}
  function flush(){flushT=null;var x=Math.round(dx*ROLL),y=Math.round(dy*ROLL);dx=0;dy=0;
   if(x||y)fetch('/cgi-bin/m?rel='+x+','+y).catch(function(){});}
  function queue(){if(!flushT)flushT=setTimeout(flush,40);}
 
  s.addEventListener('touchstart',function(e){var t=e.touches[0];
-  sx=nx(t);sy=ny(t);lx=t.clientX;ly=t.clientY;moved=false;twoF=e.touches.length>1;
+  lx=t.clientX;ly=t.clientY;moved=false;twoF=e.touches.length>1;
   s.classList.add('hit');e.preventDefault();},{passive:false});
 
  s.addEventListener('touchmove',function(e){var t=e.touches[0];moved=true;
   if(e.touches.length>1)twoF=true;
-  if(airmode){
-   if(twoF){ // 2-finger drag = wheel scroll
-    var d=t.clientY-ly; if(Math.abs(d)>6){fetch('/cgi-bin/m?wheel='+(d<0?1:-1)).catch(function(){});ly=t.clientY;}
-   }else{ dx+=t.clientX-lx; dy+=t.clientY-ly; lx=t.clientX; ly=t.clientY; queue(); }
-  }
+  if(twoF){ // 2-finger drag = wheel scroll
+   var d=t.clientY-ly; if(Math.abs(d)>6){fetch('/cgi-bin/m?wheel='+(d<0?1:-1)).catch(function(){});ly=t.clientY;}
+  }else{ dx+=t.clientX-lx; dy+=t.clientY-ly; lx=t.clientX; ly=t.clientY; queue(); }
   e.preventDefault();},{passive:false});
 
  s.addEventListener('touchend',function(e){s.classList.remove('hit');
-  var t=e.changedTouches[0];
-  if(airmode){ if(flushT){clearTimeout(flushT);flush();}
-   if(!moved){mclick();} }                     // tap = click
-  else{
-   var ex=nx(t),ey=ny(t);
-   var X=Math.round(sx*W),Y=Math.round(sy*H),EX=Math.round(ex*W),EY=Math.round(ey*H);
-   buzz();
-   if(!moved||(Math.abs(EX-X)<25&&Math.abs(EY-Y)<25))
-     fetch('/cgi-bin/m?tap='+X+','+Y).catch(function(){});
-   else
-     fetch('/cgi-bin/m?swipe='+X+','+Y+','+EX+','+EY+',120').catch(function(){});
-  }
+  if(flushT){clearTimeout(flushT);flush();}
+  if(!moved&&!twoF)mclick();                    // tap = click
   e.preventDefault();},{passive:false});
 })();
-try{pad(localStorage.getItem('pad')||'direct');}catch(e){pad('direct');}
 </script>
 </body></html>
