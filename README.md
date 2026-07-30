@@ -17,6 +17,10 @@ standalone app. That standalone WebView refuses plain HTTP (ATS / "HTTPS-only"),
 HTTPS: a tiny Go **TLS reverse proxy** (`tls-proxy/main.go`, static armv7 binary at
 `device/bin/tlsproxy`) listens on **:8443** and forwards to the busybox httpd on `127.0.0.1:8790`.
 
+The proxy also **301-redirects plaintext HTTP that lands on :8443 to https://** (it peeks the
+first byte — `0x16` = TLS handshake — and redirects anything else), so hitting `http://…:8443`
+by mistake self-corrects instead of showing "Client sent an HTTP request to an HTTPS server".
+
 TLS material (`gen-cert.sh`) is a **local CA + short-lived leaf**, not a bare self-signed cert —
 iOS rejects a self-signed cert that is `CA:TRUE` used as a server leaf. So:
 - **CA** (`ca.pem`, CN "Projector Remote Local CA", `CA:TRUE`, `keyCertSign`) — installed + trusted on the phone.
