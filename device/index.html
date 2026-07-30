@@ -1,4 +1,5 @@
 <!doctype html><html><head>
+<meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,user-scalable=no">
 <meta name=apple-mobile-web-app-capable content=yes>
 <meta name=apple-mobile-web-app-status-bar-style content=black>
@@ -23,9 +24,12 @@ button:active{background:#0a84ff;transform:scale(.96)}
 #right{top:77px;right:0}#ok{top:77px;left:77px;background:#0a84ff;border-radius:50%}
 /* touchpad */
 #pad{display:none;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:340px}
-.surface{width:100%;height:340px;background:#1c1c1e;border:1px dashed #444;border-radius:16px;
+.surface{width:100%;height:320px;background:#1c1c1e;border:1px dashed #444;border-radius:16px;
  display:flex;align-items:center;justify-content:center;color:#555;font-size:14px;text-align:center;touch-action:none}
 .surface.hit{background:#0a3050}
+.sub{display:flex;gap:8px;width:100%;background:#000;border-radius:12px;padding:4px}
+.sub button{background:transparent;font-size:14px;padding:10px 0}
+.sub button.on{background:#2a2a2e}
 /* keyboard bar (shared) */
 .kb{width:100%;max-width:340px;display:flex;flex-direction:column;gap:8px;margin-top:2px}
 .kb input{width:100%;font-size:17px;padding:14px;border-radius:12px;border:0;background:#000;color:#eee}
@@ -62,9 +66,14 @@ button:active{background:#0a84ff;transform:scale(.96)}
 
 <!-- ===== TOUCHPAD MODE ===== -->
 <div id=pad>
- <div id=surface class=surface>Tap = click &middot; drag = scroll<br>(maps to the TV screen)</div>
+ <div class=sub>
+  <button id=subDirect class=on onclick="pad('direct')">Direct&nbsp;touch</button>
+  <button id=subAir onclick="pad('air')">Air-mouse</button>
+ </div>
+ <div id=surface class=surface></div>
  <div class=row><button class=pill onclick="k('home')">Home</button>
   <button class=pill onclick="k('back')">Back</button>
+  <button id=clickBtn class=pill style="display:none" onclick="mclick()">Click</button>
   <button class=pill onclick="k('ok')">OK</button></div>
 </div>
 
@@ -99,23 +108,59 @@ function mode(m){
 }
 try{mode(localStorage.getItem('mode')||'keys');}catch(e){mode('keys');}
 
-/* touchpad: absolute mapping to the 1920x1080 screen. tap=click, drag=swipe */
+/* touchpad sub-mode: direct (absolute tap/swipe) vs air (relative cursor) */
+var airmode=false;
+function pad(p){
+ airmode=(p==='air');
+ document.getElementById('subDirect').className=airmode?'':'on';
+ document.getElementById('subAir').className=airmode?'on':'';
+ document.getElementById('clickBtn').style.display=airmode?'':'none';
+ document.getElementById('surface').textContent=airmode
+   ? 'Drag = move cursor · tap = click · 2-finger drag = scroll'
+   : 'Tap = click · drag = scroll (maps to the TV screen)';
+ try{localStorage.setItem('pad',p);}catch(e){}
+}
+function mclick(){buzz();fetch('/cgi-bin/m?click=1').catch(function(){});}
+
 (function(){
- var s=document.getElementById('surface'),sx,sy,moved;
+ var s=document.getElementById('surface');
+ var sx,sy,lx,ly,moved,twoF;
+ var ROLL=2.2;                       // air-mouse sensitivity
+ var dx=0,dy=0,flushT=null;          // accumulated relative delta
  function nx(t){var r=s.getBoundingClientRect();return Math.min(1,Math.max(0,(t.clientX-r.left)/r.width));}
  function ny(t){var r=s.getBoundingClientRect();return Math.min(1,Math.max(0,(t.clientY-r.top)/r.height));}
- s.addEventListener('touchstart',function(e){var t=e.touches[0];sx=nx(t);sy=ny(t);moved=false;
+ function flush(){flushT=null;var x=Math.round(dx*ROLL),y=Math.round(dy*ROLL);dx=0;dy=0;
+  if(x||y)fetch('/cgi-bin/m?rel='+x+','+y).catch(function(){});}
+ function queue(){if(!flushT)flushT=setTimeout(flush,40);}
+
+ s.addEventListener('touchstart',function(e){var t=e.touches[0];
+  sx=nx(t);sy=ny(t);lx=t.clientX;ly=t.clientY;moved=false;twoF=e.touches.length>1;
   s.classList.add('hit');e.preventDefault();},{passive:false});
- s.addEventListener('touchmove',function(e){moved=true;e.preventDefault();},{passive:false});
+
+ s.addEventListener('touchmove',function(e){var t=e.touches[0];moved=true;
+  if(e.touches.length>1)twoF=true;
+  if(airmode){
+   if(twoF){ // 2-finger drag = wheel scroll
+    var d=t.clientY-ly; if(Math.abs(d)>6){fetch('/cgi-bin/m?wheel='+(d<0?1:-1)).catch(function(){});ly=t.clientY;}
+   }else{ dx+=t.clientX-lx; dy+=t.clientY-ly; lx=t.clientX; ly=t.clientY; queue(); }
+  }
+  e.preventDefault();},{passive:false});
+
  s.addEventListener('touchend',function(e){s.classList.remove('hit');
-  var t=e.changedTouches[0],ex=nx(t),ey=ny(t);
-  var X=Math.round(sx*W),Y=Math.round(sy*H),EX=Math.round(ex*W),EY=Math.round(ey*H);
-  buzz();
-  if(!moved||(Math.abs(EX-X)<25&&Math.abs(EY-Y)<25))
-    fetch('/cgi-bin/m?tap='+X+','+Y).catch(function(){});
-  else
-    fetch('/cgi-bin/m?swipe='+X+','+Y+','+EX+','+EY+',120').catch(function(){});
+  var t=e.changedTouches[0];
+  if(airmode){ if(flushT){clearTimeout(flushT);flush();}
+   if(!moved){mclick();} }                     // tap = click
+  else{
+   var ex=nx(t),ey=ny(t);
+   var X=Math.round(sx*W),Y=Math.round(sy*H),EX=Math.round(ex*W),EY=Math.round(ey*H);
+   buzz();
+   if(!moved||(Math.abs(EX-X)<25&&Math.abs(EY-Y)<25))
+     fetch('/cgi-bin/m?tap='+X+','+Y).catch(function(){});
+   else
+     fetch('/cgi-bin/m?swipe='+X+','+Y+','+EX+','+EY+',120').catch(function(){});
+  }
   e.preventDefault();},{passive:false});
 })();
+try{pad(localStorage.getItem('pad')||'direct');}catch(e){pad('direct');}
 </script>
 </body></html>

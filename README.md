@@ -48,7 +48,7 @@ on the projector that turns button taps into local key events.
 | `device/index.html` | the remote UI (D-pad, volume, media keys). Pure HTML/JS, no deps. |
 | `device/cgi-bin/k` | CGI: maps `?name` → Android keycode → `input keyevent`. **Edit here to add buttons.** |
 | `device/cgi-bin/t` | CGI: types text into the focused field (URL-decode → lowercase → char-by-char). |
-| `device/cgi-bin/m` | CGI: touch injection — `tap=X,Y` → `input tap`, `swipe=X1,Y1,X2,Y2[,DUR]` → `input swipe`. Digits/commas only (validated). |
+| `device/cgi-bin/m` | CGI: pointer injection. Direct: `tap=X,Y`, `swipe=…`. Air-mouse: `rel=DX,DY`, `click=1`, `wheel=N` (via `sendevent` to the "Hi mouse" node). Digits/comma/minus only (validated). |
 | `device/boot.sh` | launcher run by init; waits for `/data`, then `exec busybox httpd -f`. Holds the **port**. |
 | `device/tvremote.rc` | Android init service; starts `boot.sh` on `sys.boot_completed=1`, seclabel `u:r:su:s0`. |
 | `deploy.sh` | push everything, set perms/SELinux contexts, (re)start. **Idempotent — this is how you update.** |
@@ -85,15 +85,20 @@ and restarts via `ctl.restart` (no reboot).
 Two tabs at the top switch the controls (choice is saved per phone via `localStorage`):
 
 - **Keys** — power/home/back, D-pad + OK, menu/mute, volume, media transport. Uses `cgi-bin/k`.
-- **Touchpad** — a surface mapped 1:1 to the TV's 1920×1080 screen. **Tap = click** at that
-  spot (`input tap`), **drag = scroll/swipe** (`input swipe`). Uses `cgi-bin/m`. Below it,
-  Home/Back/OK buttons.
+- **Touchpad** — has its own sub-toggle (**Direct touch** / **Air-mouse**), saved per phone:
+  - **Direct touch** — surface mapped 1:1 to the TV's 1920×1080 screen. **Tap = click** at
+    that spot (`input tap`), **drag = scroll/swipe** (`input swipe`). Tap where you want; no
+    cursor needed. Best in touch-aware apps (TV Bro, mpv, webviews, streaming apps).
+  - **Air-mouse** — moves the box's real hardware cursor relatively (like a laptop trackpad).
+    **Drag = move cursor**, **tap = left-click**, **2-finger drag = wheel scroll**; there's also
+    a **Click** button. Works because this box has a real mouse HID ("Hi mouse"); we inject
+    `REL_X/REL_Y`/`BTN_MOUSE`/`REL_WHEEL` via `sendevent` (NOT `input roll` — that source does
+    nothing here). The cursor is rendered by the OS, so use this in any app.
+  - Both use `cgi-bin/m`. Home/Back/OK buttons sit below.
 
-The touchpad is *absolute direct-touch*, not a relative air-mouse — you tap where you want
-rather than nudging a cursor (chosen because a floating cursor isn't reliably visible on this
-box, whereas `input tap` is verified to click). It works in apps that accept touch (TV Bro,
-mpv, webviews, most streaming apps). Pure D-pad-only screens (e.g. the launcher rows) still
-respond to a tap-on-item as a click, but for those the **Keys** mode is usually easier.
+Air-mouse sensitivity is the `ROLL` constant in `index.html` (default 2.2). Moves are batched
+~40 ms client-side to keep the HTTP chatter down. The mouse device node is auto-resolved by
+name from `/proc/bus/input/devices` and cached in `.mouseev`, so it survives reboots/renumbering.
 
 ## Keyboard & voice (dictation) input
 
