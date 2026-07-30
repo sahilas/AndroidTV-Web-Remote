@@ -1,3 +1,6 @@
 device/**/httpd.log
 *.log
 .DS_Store
+device/key.pem
+device/bin/tlsproxy
+tls-proxy/go.sum

@@ -5,14 +5,28 @@ projector** (Zeasn Whale OS), served **from the projector itself** over its own
 `adb`/root. Open a URL in any phone browser and control the box — no app store, no
 Google account, no companion PC.
 
-- **Remote URL:** `http://192.168.220.53:8790` (iPhone: Safari → Share → *Add to Home Screen*)
+- **Remote URL:** **`https://192.168.220.53:8443`** (fullscreen home-screen app; see cert step below).
+  Plain `http://192.168.220.53:8790` also serves the same page (used as the proxy backend and to
+  download the cert).
 - **Two modes** (tabs at top, remembered per phone): **Keys** (D-pad/media) and **Touchpad** (air-mouse: drag = move cursor, tap = click, 2-finger = scroll). A keyboard bar is shared by both.
-- **iOS home-screen note:** the page is served over plain HTTP. It is deliberately **not**
-  `apple-mobile-web-app-capable`, because that flag makes the home-screen icon open a standalone
-  WebView that blocks HTTP ("HTTPS-only"/ATS). Without it the icon opens in **Safari**, where HTTP
-  works — the trade-off is you see Safari's chrome instead of a fullscreen app. True fullscreen
-  would require serving HTTPS (this box has no TLS tooling, so that'd mean shipping a TLS proxy +
-  installing a trusted cert profile on the phone — not done).
+
+## HTTPS + fullscreen home-screen app
+
+The page **is** `apple-mobile-web-app-capable`, so "Add to Home Screen" launches a fullscreen
+standalone app. That standalone WebView refuses plain HTTP (ATS / "HTTPS-only"), so we serve
+HTTPS: a tiny Go **TLS reverse proxy** (`tls-proxy/main.go`, static armv7 binary at
+`device/bin/tlsproxy`) listens on **:8443** and forwards to the busybox httpd on `127.0.0.1:8790`.
+The cert is self-signed with the projector's IP in SAN (`gen-cert.sh`; iOS-valid: SAN + serverAuth
+EKU + <825-day validity).
+
+**iPhone one-time trust (required, else the standalone app can't load the self-signed cert):**
+1. In Safari open `http://192.168.220.53:8790/cert.crt` → tap through → "Profile Downloaded".
+2. Settings → General → VPN & Device Management → install the "Projector Remote" profile.
+3. Settings → General → About → **Certificate Trust Settings** → toggle it **ON** (this full-trust
+   step is mandatory for self-signed certs; the app silently fails without it).
+4. Open `https://192.168.220.53:8443` in Safari → Share → **Add to Home Screen**. Fullscreen now works.
+
+To renew/re-issue the cert: `./gen-cert.sh && ./deploy.sh`, then repeat the iPhone trust steps.
 - **Runs on:** the projector (busybox `httpd` + a CGI that injects key events as root)
 - **Boot-persistent:** yes — an Android `init` service starts and supervises it
 
@@ -55,8 +69,11 @@ on the projector that turns button taps into local key events.
 | `device/cgi-bin/k` | CGI: maps `?name` → Android keycode → `input keyevent`. **Edit here to add buttons.** |
 | `device/cgi-bin/t` | CGI: types text into the focused field (URL-decode → lowercase → char-by-char). |
 | `device/cgi-bin/m` | CGI: pointer injection. Direct: `tap=X,Y`, `swipe=…`. Air-mouse: `rel=DX,DY`, `click=1`, `wheel=N` (via `sendevent` to the "Hi mouse" node). Digits/comma/minus only (validated). |
-| `device/boot.sh` | launcher run by init; waits for `/data`, then `exec busybox httpd -f`. Holds the **port**. |
+| `device/boot.sh` | launcher run by init; waits for `/data`+cert, starts busybox httpd (:8790), then `exec`s the TLS proxy (:8443). |
 | `device/tvremote.rc` | Android init service; starts `boot.sh` on `sys.boot_completed=1`, seclabel `u:r:su:s0`. |
+| `tls-proxy/main.go` | Go HTTPS reverse proxy (:8443 → 127.0.0.1:8790). Cross-compiles to `device/bin/tlsproxy` (static armv7). |
+| `device/cert.pem`,`key.pem`,`cert.crt` | self-signed TLS cert/key (+ `.crt` for the iPhone to download). Key is gitignored; regenerate with `gen-cert.sh`. |
+| `gen-cert.sh` | (re)generate the cert with the projector IP in SAN. |
 | `deploy.sh` | push everything, set perms/SELinux contexts, (re)start. **Idempotent — this is how you update.** |
 | `restart.sh` | restart the running server, no redeploy. |
 | `uninstall.sh` | remove service + files. |
