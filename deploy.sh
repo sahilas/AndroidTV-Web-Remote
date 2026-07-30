@@ -16,9 +16,9 @@ adb -s "$TV" remount >/dev/null
 echo ">> push web app to $REMOTE"
 adb -s "$TV" shell "mkdir -p $REMOTE/cgi-bin"
 adb -s "$TV" push "$HERE/device/index.html" "$REMOTE/index.html"
-adb -s "$TV" push "$HERE/device/cgi-bin/k"  "$REMOTE/cgi-bin/k"
+adb -s "$TV" push "$HERE/device/cgi-bin/."  "$REMOTE/cgi-bin/"    # all CGIs
 adb -s "$TV" push "$HERE/device/boot.sh"    "$REMOTE/boot.sh"
-adb -s "$TV" shell "chmod 755 $REMOTE/cgi-bin/k $REMOTE/boot.sh; chmod 644 $REMOTE/index.html"
+adb -s "$TV" shell "chmod 755 $REMOTE/cgi-bin/* $REMOTE/boot.sh; chmod 644 $REMOTE/index.html"
 
 echo ">> install boot service /vendor/etc/init/tvremote.rc"
 adb -s "$TV" push "$HERE/device/tvremote.rc" /vendor/etc/init/tvremote.rc

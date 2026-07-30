@@ -16,6 +16,12 @@ button:active{background:#0a84ff;transform:scale(.96)}
 #up{top:0;left:77px}#down{bottom:0;left:77px}#left{top:77px;left:0}
 #right{top:77px;right:0}#ok{top:77px;left:77px;background:#0a84ff;border-radius:50%}
 .pill{background:#1c1c1e}.pw{background:#5a1e1e}.pw:active{background:#ff3b30}
+.kb{width:100%;max-width:320px;display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.kb input{width:100%;font-size:17px;padding:14px;border-radius:12px;border:0;background:#000;color:#eee}
+.kb .hint{font-size:11px;color:#666;text-align:center;margin:-2px 0 2px}
+.kb .krow{display:flex;gap:8px}
+.kb .krow button{padding:14px 0;font-size:15px}
+.send{background:#0a84ff}
 </style></head><body>
 <h1>Projector &middot; on-device</h1>
 <div class=row><button class=pw onclick="k('power')">&#9211;</button>
@@ -34,6 +40,25 @@ button:active{background:#0a84ff;transform:scale(.96)}
 <div class=row><button class=pill onclick="k('prev')">&#9198;</button>
  <button class=pill onclick="k('play')">&#9199;</button>
  <button class=pill onclick="k('next')">&#9197;</button></div>
-<script>function k(n){navigator.vibrate&&navigator.vibrate(8);
- fetch('/cgi-bin/k?'+n).catch(function(){});}</script>
+
+<div class=kb>
+ <input id=q type=text inputmode=text autocapitalize=off autocorrect=off
+   spellcheck=false placeholder="Type here, or use the keyboard's 🎤 to dictate">
+ <div class=hint>text is sent lowercase (search is case-insensitive)</div>
+ <div class=krow>
+  <button class=send onclick="send()">Send&nbsp;text</button>
+  <button class=pill onclick="k('enter')">&#9166; Enter</button>
+  <button class=pill onclick="k('del')">&#9003; Del</button>
+ </div>
+</div>
+
+<script>
+function k(n){navigator.vibrate&&navigator.vibrate(8);fetch('/cgi-bin/k?'+n).catch(function(){});}
+function send(){var e=document.getElementById('q');var v=e.value;if(!v)return;
+ navigator.vibrate&&navigator.vibrate(8);
+ fetch('/cgi-bin/t?'+encodeURIComponent(v)).catch(function(){});
+ e.value='';}
+document.getElementById('q').addEventListener('keydown',function(ev){
+ if(ev.key==='Enter'){ev.preventDefault();send();k('enter');}});
+</script>
 </body></html>

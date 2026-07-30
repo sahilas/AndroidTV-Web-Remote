@@ -6,6 +6,7 @@ case "$q" in
   back)    c=4  ;;  home)  c=3  ;;  menu) c=82 ;;  power) c=26 ;;
   volup)   c=24 ;;  voldown) c=25 ;; mute) c=164 ;;
   play)    c=85 ;;  prev)  c=88 ;;  next) c=87 ;; rewind) c=89 ;; ff) c=90 ;;
+  del)     c=67 ;;  enter) c=66 ;;  space) c=62 ;; search) c=84 ;;
   *) printf 'HTTP/1.0 400 Bad\r\nContent-Length: 3\r\nConnection: close\r\n\r\nno\n'; exit 0 ;;
 esac
 input keyevent "$c" >/dev/null 2>&1

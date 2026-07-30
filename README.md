@@ -46,6 +46,7 @@ on the projector that turns button taps into local key events.
 |---|---|
 | `device/index.html` | the remote UI (D-pad, volume, media keys). Pure HTML/JS, no deps. |
 | `device/cgi-bin/k` | CGI: maps `?name` → Android keycode → `input keyevent`. **Edit here to add buttons.** |
+| `device/cgi-bin/t` | CGI: types text into the focused field (URL-decode → lowercase → char-by-char). |
 | `device/boot.sh` | launcher run by init; waits for `/data`, then `exec busybox httpd -f`. Holds the **port**. |
 | `device/tvremote.rc` | Android init service; starts `boot.sh` on `sys.boot_completed=1`, seclabel `u:r:su:s0`. |
 | `deploy.sh` | push everything, set perms/SELinux contexts, (re)start. **Idempotent — this is how you update.** |
@@ -76,6 +77,25 @@ On-device install layout: web app in `/data/local/tmp/tvremote/`, service in
 
 Edit → `./deploy.sh` → refresh the phone. The script re-pushes, fixes perms/contexts,
 and restarts via `ctl.restart` (no reboot).
+
+## Keyboard & voice (dictation) input
+
+The remote page has a **text box + Send**. Type into it on the phone and tap Send;
+the text is injected into whatever field currently has focus on the projector (a
+browser URL bar, a search box, etc. — focus it on the TV first). **Enter** and **Del**
+buttons submit / backspace.
+
+- **Voice:** there is no separate mic button and no Web Speech API (that needs HTTPS,
+  which this plain-HTTP server can't provide). Instead, tap the text box → the **iOS/
+  Android on-screen keyboard has a 🎤 dictation key** → speak → tap Send. Dictation
+  happens on the phone at the OS level; the projector only receives text.
+- **Case:** text is sent **lowercase on purpose.** This device has a firmware bug where
+  `input text` latches SHIFT/caps ON after the first capital, corrupting the rest of the
+  string. Never pressing shift avoids it entirely. TV search and URL hosts are
+  case-insensitive, so this is invisible in normal use. Consequence: you can't type a
+  case-sensitive value (e.g. a password) with this — a known, documented limit.
+- Handled by `device/cgi-bin/t` (URL-decode → lowercase → inject char-by-char, space via
+  keycode 62 so it isn't dropped).
 
 ## Add or change buttons
 

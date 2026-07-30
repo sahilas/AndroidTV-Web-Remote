@@ -1,0 +1,27 @@
+#!/system/bin/sh
+# CGI: type text into the currently focused field on the projector.
+# QUERY_STRING is URL-encoded text (from encodeURIComponent). We:
+#   - url-decode (+ and %XX)
+#   - lowercase it: this device has a shift-latch bug where sending any capital
+#     via `input text` latches caps ON for the rest of the string, corrupting case.
+#     Never pressing shift avoids it entirely. TV search + URL hosts are
+#     case-insensitive, so lowercase is the correct, predictable choice here.
+#   - inject char-by-char (space via keyevent 62, so it can't be dropped as an
+#     `input text` arg separator).
+raw="$QUERY_STRING"
+raw="${raw//+/ }"                          # form-encoded spaces
+txt="$(printf '%b' "${raw//%/\\x}")"       # decode %XX
+txt="$(printf '%s' "$txt" | tr 'A-Z' 'a-z')"
+
+i=0
+n=${#txt}
+while [ "$i" -lt "$n" ]; do
+  c="${txt:$i:1}"
+  if [ "$c" = " " ]; then
+    input keyevent 62 >/dev/null 2>&1
+  else
+    input text "$c" >/dev/null 2>&1
+  fi
+  i=$((i+1))
+done
+printf 'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\nConnection: close\r\n\r\nok\n'
