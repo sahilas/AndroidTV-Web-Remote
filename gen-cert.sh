@@ -18,9 +18,10 @@ fi
 
 # --- leaf signed by the CA ---
 openssl req -newkey rsa:2048 -nodes -keyout "$D/leaf.key" -out "$D/leaf.csr" -subj "/CN=$IP"
+HOSTNAME=projectorremote.local
 openssl x509 -req -in "$D/leaf.csr" -CA "$D/ca.pem" -CAkey "$D/ca.key" -CAcreateserial \
   -out "$D/leaf.pem" -days 397 \
-  -extfile <(printf "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=IP:%s\n" "$IP")
+  -extfile <(printf "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,IP:%s\n" "$HOSTNAME" "$IP")
 
 # --- assemble what the device uses ---
 cat "$D/leaf.pem" "$D/ca.pem" > "$D/cert.pem"   # fullchain (leaf FIRST) for the proxy

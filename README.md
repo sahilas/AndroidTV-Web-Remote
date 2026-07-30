@@ -5,9 +5,12 @@ projector** (Zeasn Whale OS), served **from the projector itself** over its own
 `adb`/root. Open a URL in any phone browser and control the box — no app store, no
 Google account, no companion PC.
 
-- **Remote URL:** **`https://192.168.220.53:8443`** (fullscreen home-screen app; see cert step below).
-  Plain `http://192.168.220.53:8790` also serves the same page (used as the proxy backend and to
-  download the cert).
+- **Remote URL:** **`https://projectorremote.local:8443`** (fullscreen home-screen app; see cert step below).
+  Use the **hostname, not the IP** — mobile Safari refuses to show IP-address certs as secure even
+  when trusted. The proxy advertises `projectorremote.local` over mDNS/Bonjour (resolves with no DNS
+  config), and the cert carries that name in SAN. `https://192.168.220.53:8443` still works for
+  tools but shows "Not Secure" in iOS Safari.
+  Plain `http://192.168.220.53:8790` serves the same page (proxy backend + cert download).
 - **Two modes** (tabs at top, remembered per phone): **Keys** (D-pad/media) and **Touchpad** (air-mouse: drag = move cursor, tap = click, 2-finger = scroll). A keyboard bar is shared by both.
 
 ## HTTPS + fullscreen home-screen app
@@ -34,10 +37,15 @@ iOS rejects a self-signed cert that is `CA:TRUE` used as a server leaf. So:
 2. Safari → `http://192.168.220.53:8790/ca.crt` → tap through → install the **"Projector Remote Local CA"** profile.
 3. Settings → General → About → **Certificate Trust Settings** → toggle it **ON** (mandatory; the
    app silently fails as "Not Secure" without it).
-4. **Force-quit Safari** (WebKit caches cert failures), then open `https://192.168.220.53:8443` →
-   Share → **Add to Home Screen**. Fullscreen.
+4. **Force-quit Safari** (WebKit caches cert failures), then open `https://projectorremote.local:8443`
+   (the **hostname**, not the IP) → Share → **Add to Home Screen**. Fullscreen + Secure.
 
 Leaf renewal (`./gen-cert.sh && ./deploy.sh`) needs **no** re-trust as long as the CA is unchanged.
+
+**Why the hostname:** iOS Safari won't mark an IP-address cert as secure even with the CA trusted
+(a WebKit limitation; `security verify-cert` on macOS accepts it, on-device Safari doesn't). The Go
+proxy advertises `projectorremote.local` via mDNS (`grandcat/zeroconf`, `RegisterProxy` → A record),
+so the iPhone resolves it with zero config, and the leaf's SAN includes `DNS:projectorremote.local`.
 - **Runs on:** the projector (busybox `httpd` + a CGI that injects key events as root)
 - **Boot-persistent:** yes — an Android `init` service starts and supervises it
 

@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+
+	"github.com/grandcat/zeroconf"
 )
 
 const (
@@ -21,7 +23,11 @@ const (
 	backend = "http://127.0.0.1:8790"
 	dir     = "/data/local/tmp/tvremote"
 	defHost = "192.168.220.53:8443"
+	ip      = "192.168.220.53"
+	mdnsHost = "projectorremote" // advertised as projectorremote.local
 )
+
+var mdnsServer *zeroconf.Server
 
 // firstByteConn replays the one byte we peeked to classify the connection.
 type firstByteConn struct {
@@ -95,6 +101,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// advertise projectorremote.local (A -> ip) over mDNS/Bonjour so iOS can use a
+	// hostname instead of the bare IP (Safari won't show IP certs as secure).
+	if s, err := zeroconf.RegisterProxy("Projector Remote", "_https._tcp", "local.",
+		8443, mdnsHost, []string{ip}, []string{"path=/"}, nil); err != nil {
+		log.Printf("mdns: %v", err)
+	} else {
+		mdnsServer = s
+		defer mdnsServer.Shutdown()
+		log.Printf("mDNS: %s.local -> %s", mdnsHost, ip)
+	}
+
 	srv := &http.Server{Handler: httputil.NewSingleHostReverseProxy(b)}
 	tlsLn := tls.NewListener(splitListener{ln}, &tls.Config{
 		Certificates: []tls.Certificate{cert},
