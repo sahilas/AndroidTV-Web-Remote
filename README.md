@@ -6,6 +6,7 @@ projector** (Zeasn Whale OS), served **from the projector itself** over its own
 Google account, no companion PC.
 
 - **Remote URL:** `http://192.168.220.53:8790` (iPhone: Safari → Share → *Add to Home Screen*)
+- **Two modes** (tabs at top, remembered per phone): **Keys** (D-pad/media) and **Touchpad** (tap = click, drag = scroll). A keyboard bar is shared by both.
 - **Runs on:** the projector (busybox `httpd` + a CGI that injects key events as root)
 - **Boot-persistent:** yes — an Android `init` service starts and supervises it
 
@@ -47,6 +48,7 @@ on the projector that turns button taps into local key events.
 | `device/index.html` | the remote UI (D-pad, volume, media keys). Pure HTML/JS, no deps. |
 | `device/cgi-bin/k` | CGI: maps `?name` → Android keycode → `input keyevent`. **Edit here to add buttons.** |
 | `device/cgi-bin/t` | CGI: types text into the focused field (URL-decode → lowercase → char-by-char). |
+| `device/cgi-bin/m` | CGI: touch injection — `tap=X,Y` → `input tap`, `swipe=X1,Y1,X2,Y2[,DUR]` → `input swipe`. Digits/commas only (validated). |
 | `device/boot.sh` | launcher run by init; waits for `/data`, then `exec busybox httpd -f`. Holds the **port**. |
 | `device/tvremote.rc` | Android init service; starts `boot.sh` on `sys.boot_completed=1`, seclabel `u:r:su:s0`. |
 | `deploy.sh` | push everything, set perms/SELinux contexts, (re)start. **Idempotent — this is how you update.** |
@@ -77,6 +79,21 @@ On-device install layout: web app in `/data/local/tmp/tvremote/`, service in
 
 Edit → `./deploy.sh` → refresh the phone. The script re-pushes, fixes perms/contexts,
 and restarts via `ctl.restart` (no reboot).
+
+## Modes
+
+Two tabs at the top switch the controls (choice is saved per phone via `localStorage`):
+
+- **Keys** — power/home/back, D-pad + OK, menu/mute, volume, media transport. Uses `cgi-bin/k`.
+- **Touchpad** — a surface mapped 1:1 to the TV's 1920×1080 screen. **Tap = click** at that
+  spot (`input tap`), **drag = scroll/swipe** (`input swipe`). Uses `cgi-bin/m`. Below it,
+  Home/Back/OK buttons.
+
+The touchpad is *absolute direct-touch*, not a relative air-mouse — you tap where you want
+rather than nudging a cursor (chosen because a floating cursor isn't reliably visible on this
+box, whereas `input tap` is verified to click). It works in apps that accept touch (TV Bro,
+mpv, webviews, most streaming apps). Pure D-pad-only screens (e.g. the launcher rows) still
+respond to a tap-on-item as a click, but for those the **Keys** mode is usually easier.
 
 ## Keyboard & voice (dictation) input
 

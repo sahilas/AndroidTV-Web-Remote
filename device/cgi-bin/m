@@ -1,0 +1,18 @@
+#!/system/bin/sh
+# CGI: touch/mouse injection. Screen is 1920x1080; the phone sends absolute
+# integer coords (mapped client-side from the touchpad rect).
+#   m?tap=X,Y                    -> input tap X Y
+#   m?swipe=X1,Y1,X2,Y2[,DUR]    -> input swipe X1 Y1 X2 Y2 DUR   (scroll/drag)
+# Values are digits+commas only (validated) so they're safe to pass to the shell.
+qs="$QUERY_STRING"
+op="${qs%%=*}"; val="${qs#*=}"
+case "$val" in *[!0-9,]* | "")
+  printf 'HTTP/1.0 400 Bad\r\nContent-Length: 3\r\nConnection: close\r\n\r\nno\n'; exit 0 ;;
+esac
+IFS=,; set -- $val; unset IFS
+case "$op" in
+  tap)   [ -n "$2" ] && input tap "$1" "$2" >/dev/null 2>&1 ;;
+  swipe) [ -n "$4" ] && input swipe "$1" "$2" "$3" "$4" "${5:-120}" >/dev/null 2>&1 ;;
+  *) printf 'HTTP/1.0 400 Bad\r\nContent-Length: 3\r\nConnection: close\r\n\r\nno\n'; exit 0 ;;
+esac
+printf 'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\nConnection: close\r\n\r\nok\n'
