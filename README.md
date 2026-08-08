@@ -28,7 +28,8 @@ Google account, no companion PC.
 
 ## Requirements (on the Mac)
 
-- `adb` (`brew install android-platform-tools`) and **Go 1.21+** (to cross-compile the proxy).
+- `adb` (`brew install android-platform-tools`) and **Go 1.25+** (to cross-compile the proxy —
+  `golang.org/x/crypto` requires it).
 - Projector reachable on the LAN with network adb up. Recovery is guaranteed by two
   device props already set: `persist.adb.tcp.port=5555` and `ro.debuggable=1`, so adb
   returns on every boot even if the remote fails.
