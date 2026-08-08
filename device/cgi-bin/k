@@ -1,5 +1,10 @@
 #!/system/bin/sh
 # busybox httpd CGI: map ?name -> android keycode -> inject locally (runs as root)
+#
+# Held keys (?long_ok) are NOT here: `input keyevent --longpress` was tried and
+# measured not to work on this box — it injects down/repeat/up at one timestamp,
+# so apps that time the press see 0 ms and treat it as a tap. The proxy handles
+# ?long_ok natively by holding the key on the evdev node instead.
 q="$QUERY_STRING"
 case "$q" in
   up)      c=19 ;;  down)  c=20 ;;  left) c=21 ;;  right) c=22 ;;  ok) c=23 ;;

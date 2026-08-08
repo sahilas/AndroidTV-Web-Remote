@@ -5,15 +5,23 @@
 <meta name=apple-mobile-web-app-capable content=yes>
 <meta name=apple-mobile-web-app-status-bar-style content=black>
 <title>TV Remote</title><style>
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;
+ -webkit-touch-callout:none}
+/* manipulation = no double-tap-to-zoom delay, and no iOS callout on a long hold */
+button{touch-action:manipulation}
 body{margin:0;background:#111;font-family:-apple-system,sans-serif;color:#eee;
  display:flex;flex-direction:column;align-items:center;padding:12px;gap:12px}
-h1{font-size:14px;color:#888;font-weight:500;margin:2px 0}
+h1{font-size:14px;color:#888;font-weight:500;margin:2px 0;display:flex;align-items:center;gap:7px}
 .row{display:flex;gap:12px;justify-content:center;width:100%;max-width:340px}
+.row.tight{gap:8px}
 button{flex:1;border:0;border-radius:14px;background:#2a2a2e;color:#eee;
  font-size:18px;padding:16px 0;font-weight:600}
 button:active{background:#0a84ff;transform:scale(.96)}
 .pill{background:#1c1c1e}.pw{background:#5a1e1e}.pw:active{background:#ff3b30}
+/* link status: green = last request ok, red = unreachable, amber = token gone */
+#dot{width:8px;height:8px;border-radius:50%;background:#2c2c2e;flex:none}
+#dot.ok{background:#30d158}#dot.off{background:#ff3b30}#dot.auth{background:#ff9f0a}
+#msg{font-size:11px;color:#ff9f0a;text-align:center;max-width:340px;margin:-6px 0 0;display:none}
 /* mode tabs */
 .tabs{display:flex;gap:8px;width:100%;max-width:340px;background:#000;border-radius:14px;padding:5px}
 .tabs button{background:transparent;font-size:15px;padding:12px 0}
@@ -31,14 +39,39 @@ button:active{background:#0a84ff;transform:scale(.96)}
 .sub{display:flex;gap:8px;width:100%;background:#000;border-radius:12px;padding:4px}
 .sub button{background:transparent;font-size:14px;padding:10px 0}
 .sub button.on{background:#2a2a2e}
-/* keyboard bar (shared) */
+/* sensitivity slider */
+.sens{display:flex;align-items:center;gap:10px;width:100%;font-size:12px;color:#888}
+.sens input{flex:1;accent-color:#0a84ff}
+/* apps + keyboard bar (shared by both modes) */
+.apps{width:100%;max-width:340px;display:flex;gap:8px}
+.apps button{background:#1c1c1e;font-size:13px;padding:11px 2px;font-weight:500;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.aphint{font-size:11px;color:#666;text-align:center;max-width:340px;margin:-6px 0 0}
+/* amber = a hold is in progress. After :active so it wins; #ok needs the id
+   selector to outrank #ok's own blue. */
+button.hold{background:#ff9f0a}
+#ok.hold{background:#ff9f0a}
+/* app picker sheet */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9;
+ align-items:flex-end;justify-content:center}
+.overlay.on{display:flex}
+.sheet{width:100%;max-width:380px;max-height:82vh;background:#1c1c1e;border-radius:18px 18px 0 0;
+ padding:14px;display:flex;flex-direction:column;gap:10px}
+.sheet h2{font-size:15px;margin:2px 0 0;font-weight:600}
+.sheet .sub2{font-size:11px;color:#888;margin:0}
+#applist{overflow-y:auto;display:flex;flex-direction:column;gap:6px;-webkit-overflow-scrolling:touch}
+#applist button{background:#2a2a2e;font-size:15px;padding:13px 12px;text-align:left;
+ border-radius:10px;font-weight:500;display:block;width:100%}
+#applist button .pk{display:block;font-size:10px;color:#888;font-weight:400;margin-top:2px}
+#applist button.cur{background:#0a3050}
 .kb{width:100%;max-width:340px;display:flex;flex-direction:column;gap:8px;margin-top:2px}
 .kb input{width:100%;font-size:17px;padding:14px;border-radius:12px;border:0;background:#000;color:#eee}
 .kb .hint{font-size:11px;color:#666;text-align:center;margin:-2px 0}
 .send{background:#0a84ff}
 #keys{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%}
 </style></head><body>
-<h1>Projector &middot; 192.168.220.53</h1>
+<h1><span id=dot></span><span id=host>Projector</span></h1>
+<div id=msg></div>
 
 <div class=tabs>
  <button id=tabKeys class=on onclick="mode('keys')">&#9776; Keys</button>
@@ -53,25 +86,42 @@ button:active{background:#0a84ff;transform:scale(.96)}
  <div class=dpad>
   <button id=up onclick="k('up')">&#9650;</button>
   <button id=left onclick="k('left')">&#9664;</button>
-  <button id=ok onclick="k('ok')">OK</button>
+  <button id=ok class=okbtn>OK</button>
   <button id=right onclick="k('right')">&#9654;</button>
   <button id=down onclick="k('down')">&#9660;</button></div>
  <div class=row><button class=pill onclick="k('menu')">Menu</button>
   <button class=pill onclick="k('mute')">&#128263;</button></div>
  <div class=row><button onclick="k('voldown')">Vol &minus;</button>
   <button onclick="k('volup')">Vol +</button></div>
- <div class=row><button class=pill onclick="k('prev')">&#9198;</button>
+ <div class="row tight"><button class=pill onclick="k('prev')">&#9198;</button>
+  <button class=pill onclick="k('rewind')">&#9194;</button>
   <button class=pill onclick="k('play')">&#9199;</button>
+  <button class=pill onclick="k('ff')">&#9193;</button>
   <button class=pill onclick="k('next')">&#9197;</button></div>
 </div>
 
 <!-- ===== TOUCHPAD MODE (air-mouse) ===== -->
 <div id=pad>
  <div id=surface class=surface>Drag = move cursor &middot; tap = click<br>2-finger drag = scroll</div>
+ <div class=sens>Speed<input id=sens type=range min=1 max=5 step=.2><span id=sensv>2.2</span></div>
  <div class=row><button class=pill onclick="k('home')">Home</button>
   <button class=pill onclick="k('back')">Back</button>
   <button class=pill onclick="mclick()">Click</button>
-  <button class=pill onclick="k('ok')">OK</button></div>
+  <button class="pill okbtn">OK</button></div>
+</div>
+
+<!-- ===== APPS (shared) — 4 editable favourite slots ===== -->
+<div class=apps id=apps></div>
+<div class=aphint>hold OK for an app&rsquo;s context menu &middot; hold an app button to change it</div>
+
+<!-- app picker -->
+<div id=picker class=overlay>
+ <div class=sheet>
+  <h2>Choose app for slot <span id=slotN></span></h2>
+  <p class=sub2>installed apps the projector's own launcher lists</p>
+  <div id=applist></div>
+  <button class=pill onclick="closePicker()">Cancel</button>
+ </div>
 </div>
 
 <!-- ===== KEYBOARD BAR (shared) ===== -->
@@ -87,11 +137,180 @@ button:active{background:#0a84ff;transform:scale(.96)}
 </div>
 
 <script>
-var W=1920,H=1080;
+document.getElementById('host').textContent=
+ 'Projector'+(location.hostname?' · '+location.hostname:'');
 function buzz(){navigator.vibrate&&navigator.vibrate(8);}
-function k(n){buzz();fetch('/cgi-bin/k?'+n).catch(function(){});}
+
+/* Link status. A 401/403 RESOLVES the fetch promise, so checking res.ok matters:
+   without it an expired token makes every button silently do nothing while the
+   UI still looks healthy. */
+var dot=document.getElementById('dot'),msgEl=document.getElementById('msg'),msgT=null;
+function stat(s,text){
+ dot.className=s;
+ if(text){msgEl.textContent=text;msgEl.style.display='block';}
+ else{msgEl.style.display='none';}
+ if(s==='ok'){clearTimeout(msgT);msgT=setTimeout(function(){dot.className='';},1200);}
+}
+/* Transient confirmation. Without this, "the hold gesture never fired" and "the
+   app has no long-press action" look identical from the couch. */
+var flashT=null;
+function flash(t){
+ msgEl.textContent=t;msgEl.style.display='block';
+ clearTimeout(flashT);flashT=setTimeout(function(){msgEl.style.display='none';},1500);
+}
+function req(u){
+ return fetch(u).then(function(r){
+  if(r.status===401||r.status===403)stat('auth','not authorized — reopen the remote link with ?t=… (or re-add it to the home screen)');
+  else if(!r.ok)stat('off','projector returned '+r.status);
+  else stat('ok');
+  return r;
+ }).catch(function(){stat('off','can’t reach the projector — same WiFi? is it on?');});
+}
+
+function k(n){buzz();req('/cgi-bin/k?'+n);}
+
+/* ===== favourite app slots =====
+   4 slots, saved on this phone. A slot holds a package name, or the sentinel
+   '@set' for Settings — which has no launcher activity on this box and so never
+   appears in the app list; it goes through the fixed cgi-bin/a?set shortcut. */
+var SET='@set';
+var DEFAULT_FAVS=['com.example.cinepulse','org.videolan.vlc','com.brouken.player',SET];
+/* Display names only — cosmetic. Real labels aren't reachable: the device
+   reports labelRes resource IDs and has no aapt to resolve them. Unknown
+   packages fall back to a derived name, and the picker always shows the
+   package too, so a slot is never ambiguous. */
+var NAMES={'@set':'Settings',
+ 'com.example.cinepulse':'CinePulse','org.videolan.vlc':'VLC',
+ 'com.brouken.player':'Just Player','dev.anilbeesetti.nextplayer':'NextPlayer',
+ 'org.smarttube.stable':'SmartTube','app.netmirror.newtv':'NetMirror',
+ 'com.bstar.intl.tv':'Bilibili','com.lonelycatgames.Xplore':'X-plore',
+ 'com.phlox.tvwebbrowser':'Browser','com.rmedia.rplayer':'RPlayer',
+ 'com.newlink.filemanager':'Files','com.newlink.cast':'Cast',
+ 'com.hisilicon.miracast':'Miracast','com.zhiying.bluetoothmodelservice':'Bluetooth',
+ 'com.cybercat.adbappcontrol.tv':'ADB Control','com.example.tvsettingsshortcut':'TV Settings',
+ 'com.omeda.arc':'Arc','com.hisilicon.android.videoplayer':'Hi Player'};
+var GENERIC={com:1,org:1,net:1,app:1,io:1,tv:1,dev:1,me:1,co:1,android:1,
+ google:1,googleplay:1,stable:1,intl:1,free:1,mobile:1};
+function label(p){
+ if(NAMES[p])return NAMES[p];
+ var best='';
+ p.split('.').forEach(function(s){if(!GENERIC[s.toLowerCase()]&&s.length>best.length)best=s;});
+ if(!best)best=p;
+ return best.charAt(0).toUpperCase()+best.slice(1);
+}
+
+var favs=DEFAULT_FAVS.slice();
+/* isArray matters: a 4-character string would also pass a .length===4 check and
+   then blow up in renderFavs. */
+try{var f=JSON.parse(localStorage.getItem('favs'));
+ if(Array.isArray(f)&&f.length===4&&f.every(function(x){return typeof x==='string'&&x;}))favs=f;}catch(e){}
+function saveFavs(){try{localStorage.setItem('favs',JSON.stringify(favs));}catch(e){}}
+
+function launchSlot(i){
+ var p=favs[i];
+ buzz();
+ req(p===SET?'/cgi-bin/a?set':'/cgi-bin/a?pkg='+encodeURIComponent(p));
+}
+
+function renderFavs(){
+ var box=document.getElementById('apps');
+ box.textContent='';
+ favs.forEach(function(p,i){
+  var b=document.createElement('button');
+  b.textContent=label(p);
+  b.title=p;
+  bindSlot(b,i);
+  box.appendChild(b);
+ });
+}
+
+/* Generic tap-vs-hold. Bind touch OR mouse, never both, or a phone fires each
+   gesture twice. A hold must not also fire the tap. */
+var TOUCH='ontouchstart' in window;
+var SLOP=14;   // px a finger may drift before it counts as a drag, not a hold
+function bindHold(b,onTap,onHold){
+ var timer=null,held=false,sx=0,sy=0,moved=false;
+ function down(){held=false;b.classList.add('hold');
+  timer=setTimeout(function(){held=true;b.classList.remove('hold');buzz();onHold();},550);}
+ function cancel(){clearTimeout(timer);b.classList.remove('hold');}
+ function up(){var wasHeld=held;cancel();if(!wasHeld)onTap();}
+ if(TOUCH){
+  /* touchstart stays PASSIVE. preventDefault()ing it would suppress iOS's
+     long-press callout, but it also kills page scrolling for swipes that begin
+     on a button — and the app row sits right at the bottom edge where you'd
+     start one. The callout is suppressed in CSS instead
+     (-webkit-touch-callout:none + touch-action:manipulation). */
+  b.addEventListener('touchstart',function(e){
+   var t=e.touches[0]; sx=t.clientX; sy=t.clientY; moved=false; down();},{passive:true});
+  /* Only a real drag cancels. Cancelling on ANY touchmove was the bug: a finger
+     resting on a button always jitters a pixel or two, so the hold never
+     survived on a phone — while a mouse, which doesn't drift, worked fine, which
+     is why testing only the mouse path missed it. */
+  b.addEventListener('touchmove',function(e){
+   var t=e.touches[0]; if(!t||moved)return;
+   if(Math.abs(t.clientX-sx)>SLOP||Math.abs(t.clientY-sy)>SLOP){moved=true;cancel();}},{passive:true});
+  /* A swipe that leaves the button must not fire the tap on release either,
+     or scrolling from the app row would launch an app. */
+  b.addEventListener('touchend',function(e){
+   if(moved){cancel();return;}
+   e.preventDefault();up();},{passive:false});
+  b.addEventListener('touchcancel',cancel);
+ }else{
+  b.addEventListener('mousedown',down);
+  b.addEventListener('mouseup',up);
+  b.addEventListener('mouseleave',cancel);
+  b.addEventListener('contextmenu',function(e){e.preventDefault();cancel();onHold();});
+ }
+}
+function bindSlot(b,i){
+ bindHold(b,function(){launchSlot(i);},function(){openPicker(i);});
+}
+
+/* OK: tap = DPAD_CENTER, hold = HELD DPAD_CENTER, which is how Android apps are
+   told to open a context menu. Both OK buttons (Keys d-pad and Touchpad row) get
+   it — they're the same key, so they shouldn't behave differently. */
+[].forEach.call(document.querySelectorAll('.okbtn'),function(b){
+ bindHold(b,function(){k('ok');},function(){flash('held OK sent');k('long_ok');});
+});
+
+var pickSlot=0;
+function openPicker(i){
+ pickSlot=i;
+ document.getElementById('slotN').textContent=(i+1);
+ var list=document.getElementById('applist');
+ list.textContent='';
+ document.getElementById('picker').classList.add('on');
+ var loading=document.createElement('button');
+ loading.textContent='loading…';loading.disabled=true;list.appendChild(loading);
+ fetch('/cgi-bin/a?list').then(function(r){
+  if(!r.ok)throw 0; return r.json();
+ }).then(function(pkgs){
+  pkgs.push(SET);                                    // Settings isn't in the list
+  pkgs.sort(function(a,b){return label(a).toLowerCase()<label(b).toLowerCase()?-1:1;});
+  list.textContent='';
+  pkgs.forEach(function(p){
+   var b=document.createElement('button');
+   if(p===favs[pickSlot])b.className='cur';
+   b.appendChild(document.createTextNode(label(p)));
+   var s=document.createElement('span');s.className='pk';s.textContent=p;
+   b.appendChild(s);
+   b.onclick=function(){favs[pickSlot]=p;saveFavs();renderFavs();closePicker();};
+   list.appendChild(b);
+  });
+ }).catch(function(){
+  list.textContent='';
+  var b=document.createElement('button');
+  b.disabled=true;b.textContent='couldn’t load the app list';
+  list.appendChild(b);
+  stat('off','couldn’t load the app list from the projector');
+ });
+}
+function closePicker(){document.getElementById('picker').classList.remove('on');}
+document.getElementById('picker').addEventListener('click',function(e){
+ if(e.target===this)closePicker();});    // tap the backdrop to dismiss
+renderFavs();
 function send(){var e=document.getElementById('q'),v=e.value;if(!v)return;buzz();
- fetch('/cgi-bin/t?'+encodeURIComponent(v)).catch(function(){});e.value='';}
+ req('/cgi-bin/t?'+encodeURIComponent(v));e.value='';}
 document.getElementById('q').addEventListener('keydown',function(ev){
  if(ev.key==='Enter'){ev.preventDefault();send();k('enter');}});
 
@@ -106,14 +325,21 @@ function mode(m){
 try{mode(localStorage.getItem('mode')||'keys');}catch(e){mode('keys');}
 
 /* touchpad = relative air-mouse: drag moves the real cursor, tap clicks, 2-finger scrolls */
-function mclick(){buzz();fetch('/cgi-bin/m?click=1').catch(function(){});}
+function mclick(){buzz();req('/cgi-bin/m?click=1');}
 (function(){
  var s=document.getElementById('surface');
  var lx,ly,moved,twoF;
- var ROLL=2.2;                       // air-mouse sensitivity
+ var ROLL=2.2;                       // air-mouse sensitivity (slider below)
  var dx=0,dy=0,flushT=null;          // accumulated relative delta
+
+ var sl=document.getElementById('sens'),sv=document.getElementById('sensv');
+ try{ROLL=parseFloat(localStorage.getItem('roll'))||ROLL;}catch(e){}
+ sl.value=ROLL;sv.textContent=ROLL.toFixed(1);
+ sl.addEventListener('input',function(){ROLL=parseFloat(sl.value);
+  sv.textContent=ROLL.toFixed(1);try{localStorage.setItem('roll',ROLL);}catch(e){}});
+
  function flush(){flushT=null;var x=Math.round(dx*ROLL),y=Math.round(dy*ROLL);dx=0;dy=0;
-  if(x||y)fetch('/cgi-bin/m?rel='+x+','+y).catch(function(){});}
+  if(x||y)req('/cgi-bin/m?rel='+x+','+y);}
  function queue(){if(!flushT)flushT=setTimeout(flush,40);}
 
  s.addEventListener('touchstart',function(e){var t=e.touches[0];
@@ -123,7 +349,7 @@ function mclick(){buzz();fetch('/cgi-bin/m?click=1').catch(function(){});}
  s.addEventListener('touchmove',function(e){var t=e.touches[0];moved=true;
   if(e.touches.length>1)twoF=true;
   if(twoF){ // 2-finger drag = wheel scroll
-   var d=t.clientY-ly; if(Math.abs(d)>6){fetch('/cgi-bin/m?wheel='+(d<0?1:-1)).catch(function(){});ly=t.clientY;}
+   var d=t.clientY-ly; if(Math.abs(d)>6){req('/cgi-bin/m?wheel='+(d<0?1:-1));ly=t.clientY;}
   }else{ dx+=t.clientX-lx; dy+=t.clientY-ly; lx=t.clientX; ly=t.clientY; queue(); }
   e.preventDefault();},{passive:false});
 
