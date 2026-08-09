@@ -695,10 +695,25 @@ break parsing — `./logs.sh` and the `/caps` endpoint are where that would show
 emulator. The emulator is the right *profile* (`user` build, Enforcing, `adb root` refused)
 but its input devices are virtual, so a physical box's node layout is still unverified.
 
-**Air-mouse and hold-OK on a locked box.** Not a gap that can be closed in this design —
-both evdev routes (`/dev/input` and `/dev/uinput`) are denied to the shell domain under
-SELinux Enforcing. It would take a companion APK with an AccessibilityService, which is a
-much larger project than this one.
+**Air-mouse on a locked box.** Not closable by any route available here, and **not** by a
+companion app either — that was an earlier, wrong guess in this README, corrected after
+looking at what an AccessibilityService can actually do. It performs actions on UI *nodes*;
+it does not inject input events (`INJECT_EVENTS` is signature-level). `dispatchGesture`
+delivers absolute touch strokes, not a cursor, and a leanback UI consumes D-pad focus rather
+than touch. The pointer is a rooted-or-Permissive-box feature.
+
+**Hold-OK on a locked box.** Partly recoverable, not fully. A companion
+AccessibilityService can call `ACTION_LONG_CLICK` on the focused node — but that acts
+*above* the app, so it only exists where the focused view exposes it. The evdev hold it
+would replace acts *below* the app and is therefore universal. Expect it to work in
+launchers and list UIs and to do nothing in SurfaceView players, which is where the original
+was most useful.
+
+**Boot persistence on a locked box.** This one a companion app genuinely does fix: the
+system starts an enabled AccessibilityService on every boot, with no writable `/vendor`
+needed. Scaffolded and measured — service builds, installs, binds, and can be enabled
+entirely over adb: **[AndroidTV-Remote-Assist](https://github.com/sahilas/AndroidTV-Remote-Assist)**
+(private while it is a skeleton).
 
 ## Device facts (for future edits)
 
