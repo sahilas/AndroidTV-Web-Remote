@@ -1,20 +1,52 @@
-# Projector Web Remote
+# Android TV Web Remote
 
-A phone-friendly web remote for the living-room **HiSilicon Hi3751V350 Android 12
-projector** (Zeasn Whale OS), served **from the projector itself** over its own
-`adb`/root. Open a URL in any phone browser and control the box — no app store, no
-Google account, no companion PC.
+A phone-friendly web remote for **Android TV boxes that Google's own remote app cannot
+control** — the ones that report as "Android TV" but are not Google-certified, so they never
+advertise `_androidtvremote2._tcp` and have no Cast. Open a URL in any phone browser and
+control the box. No app store, no Google account, no companion PC, no app to install on
+the phone.
 
-- **Remote URL:** **`https://<projector-ip>:8443/?t=<token>`** (fullscreen home-screen app; needs the
-  CA trusted once and the token once — see below). `./deploy.sh` prints the exact URL.
-  A hostname `https://projectorremote.local:8443` is also advertised via mDNS and is in the cert's
-  SAN, but only resolves on networks that pass mDNS between clients (mine blocks it, so I use the IP).
-  The backend on `8790` is **loopback-only** and not reachable from the LAN.
-- **Two modes** (tabs at top, remembered per phone): **Keys** (D-pad/media) and **Touchpad** (air-mouse: drag = move cursor, tap = click, 2-finger = scroll). A 4-slot app row (tap = launch, hold = change app) and a keyboard bar are shared by both.
+It is a **single static Go binary** pushed to the box over network `adb`. It serves the UI
+over HTTPS and injects input itself. There is no web server to install, no busybox, no
+scripting runtime, and nothing written outside `/data/local/tmp` unless boot persistence is
+possible.
 
-> Throughout this README `192.168.220.53` is **my** projector's DHCP address, used as a
-> concrete example. See [Point it at your device](#point-it-at-your-device) for the three
-> places to change it.
+- **Remote URL:** **`https://<box-ip>:8443/?t=<token>`** — a fullscreen home-screen app once
+  the CA is trusted once and the token used once. `./deploy.sh` prints the exact URL.
+  `https://<mdns-host>.local:8443` is also advertised and is in the cert's SAN, but only
+  resolves on networks that pass mDNS between clients, so the IP is the reliable address.
+- **Two modes** (tabs at top, remembered per phone): **Keys** (D-pad/media) and **Touchpad**
+  (air-mouse: drag = move cursor, tap = click, 2-finger = scroll). A 4-slot app row
+  (tap = launch, hold = change app) and a keyboard bar are shared by both.
+
+> **Tested on one box.** Everything here is verified on a HiSilicon Hi3751V350 running
+> Android 12 (Zeasn Whale OS). The portability work is deliberate and the device-specific
+> assumptions have been removed, but until someone runs this on a second box, "works on any
+> Android TV" is a design intent, not a measurement. Where a claim is untested, this README
+> says so. `192.168.220.53` throughout is that box's DHCP address, used as a concrete example.
+
+## Will it work on your box?
+
+`./deploy.sh` probes and prints a tier before changing anything. Two things decide it:
+
+| | Needs | If absent |
+|---|---|---|
+| **Everything** — D-pad, media, volume, text, app launch, **air-mouse, held-OK** | network `adb`, and the `shell` user in the `input` group (standard on AOSP) | nothing works; the box is not reachable |
+| **Boot persistence** | `adb root` **and** a writable `/vendor` — i.e. a `userdebug` build | remote works fully, but must be relaunched over adb after a reboot |
+
+The surprising part, and the reason this is worth using on a locked box: **root is not
+required for the air-mouse or the real held-OK press.** Both write to `/dev/input` directly,
+and the `shell` user can do that because it is in the `input` group — the same reason
+`sendevent` works from `adb shell` on a stock device. Measured on the projector by deploying
+as uid 2000: all features work, both evdev nodes open.
+
+Only boot persistence needs root, because `init` reads service definitions from a partition
+a locked box will not let you write.
+
+**Untested:** every box in this table is inferred from one that is SELinux **Permissive**.
+On an **Enforcing** box, policy — not group membership — decides `/dev/input` access, and
+that could take the air-mouse and held-OK away while leaving keys and text working. If you
+run this on an Enforcing box, that is the thing to report.
 
 ## Contents
 
@@ -28,17 +60,24 @@ Google account, no companion PC.
 
 ## Requirements (on the Mac)
 
-- `adb` (`brew install android-platform-tools`) and **Go 1.25+** (to cross-compile the proxy —
+- `adb` (`brew install android-platform-tools`) and **Go 1.25+** (to cross-compile the server —
   `golang.org/x/crypto` requires it).
-- Projector reachable on the LAN with network adb up. Recovery is guaranteed by two
-  device props already set: `persist.adb.tcp.port=5555` and `ro.debuggable=1`, so adb
-  returns on every boot even if the remote fails.
+- **On the box: nothing.** No busybox, no web server, no scripting runtime. That is the point —
+  the binary is static and self-contained, so there is nothing to install or depend on.
+- The box reachable on the LAN with network adb up (see
+  [Point it at your device](#point-it-at-your-device)).
+
+On the projector this repo was built against, `persist.adb.tcp.port=5555` and
+`ro.debuggable=1` are set, so adb comes back on every boot even if the remote fails — that
+is the recovery path. A retail box without those props needs USB and `adb tcpip 5555` again
+after a reboot, which is worth knowing before you rely on it.
 
 ## Quick start / update workflow
 
 ```bash
-./gen-cert.sh                # once: local CA + leaf (no TLS material is committed)
-./deploy.sh                  # first install AND every future update — edit files, then re-run
+cp config.env config.local.env   # once: point TV_ADDR at your box
+./gen-cert.sh                    # once: local CA + leaf (no TLS material is committed)
+./deploy.sh                      # first install AND every future update
 ```
 
 Then trust the CA on the phone once — see
@@ -58,13 +97,14 @@ properties and refuses to report success unless all of them hold:
 
 | check | want |
 |---|---|
-| `http://IP:8790/` (backend from the LAN) | **000** — closed |
 | `https://IP:8443/` with no token | **401** |
 | `https://IP:8443/` with the token | **200** |
+| `<html` present in that response body | **1** — a 200 alone would also pass on an empty embed |
 | `http://IP:8443/ca.crt` (plaintext) | **200** — trust bootstrap intact |
-| `…/cgi-bin/k?volup` with the token | **200** — CGI really execs (paired with a `voldown` so volume ends where it started) |
+| `…/cgi-bin/k?volup` with the token | **200** — injection really runs (paired with a `voldown` so volume ends where it started) |
 | `…/key.pem` **with** the token | **404** — TLS private key not downloadable |
 | `…/token` **with** the token | **404** — the secret can't be read back out |
+| listeners on `:8790` | **0** — no busybox survived from the old layout |
 
 `device/bin/tlsproxy` is **gitignored**, so a fresh clone has no binary at all —
 `deploy.sh` calling `build.sh` is what makes a clone deployable, and what stops an
@@ -74,21 +114,42 @@ key is in a public repo, so `gen-cert.sh` is a required first step, not an optio
 
 ## Point it at your device
 
-The projector's address is hardcoded in three places (it's an RFC1918 LAN address, not a
-secret — this is a single-device tool, not a configurable product). To adopt it, change:
+One file. Copy it and edit the copy:
 
-| Where | Line |
+```bash
+cp config.env config.local.env
+```
+
+`config.local.env` is gitignored and overrides `config.env`, so your box's address never
+lands in a commit and `git pull` cannot clobber your settings. The only value you must
+change is the adb endpoint:
+
+```bash
+TV_ADDR=192.168.1.100:5555
+```
+
+Then `./gen-cert.sh && ./deploy.sh`. The rest (`HTTPS_PORT`, `REMOTE_DIR`, `MDNS_HOST`)
+have working defaults.
+
+**Getting network adb up** is the one prerequisite this repo cannot do for you. If the box
+already has `persist.adb.tcp.port=5555` set, it is listening after every boot. Otherwise
+connect it over USB once and run `adb tcpip 5555`.
+
+**If the box's IP moves** — it is a DHCP lease — the leaf certificate's IP SAN no longer
+matches and the phone reports the certificate as invalid. Re-run `./gen-cert.sh &&
+./deploy.sh`. A DHCP reservation on your router avoids this entirely, and is worth doing.
+
+### Overrides you probably will not need
+
+| Flag | For |
 |---|---|
-| `deploy.sh`, `restart.sh`, `logs.sh`, `uninstall.sh` | `TV=192.168.220.53:5555` |
-| `gen-cert.sh` | `IP=192.168.220.53` (goes into the cert's SAN — must match, or iOS rejects it) |
-| `tls-proxy/main.go` | `defHost` / `ip` (~line 50) |
+| `TVR_FORCE_SHELL=1 ./deploy.sh` | deploy as the unprivileged `shell` user even where `adb root` would work |
+| `-pointer-name` / `-key-name` | pin an input device by exact name when capability detection picks the wrong one |
 
-Then `./gen-cert.sh && ./deploy.sh`. If your projector's IP moves (it's a DHCP lease), the
-leaf cert's IP SAN no longer matches and the phone will report the certificate as invalid —
-re-run both. A DHCP reservation on the router avoids this.
-
-Ports (`8443` HTTPS, `8790` loopback backend) are in `deploy.sh`/`restart.sh`,
-`device/boot.sh`, and `tls-proxy/main.go`.
+Input devices are found by **capability**, not by name: a pointer is whatever declares
+`EV_REL` with `REL_X`/`REL_Y`, and a key device is whatever declares `EV_KEY` with
+`KEY_ENTER`. That is why no vendor-specific device name appears anywhere in the source.
+The proxy logs which nodes it bound on every start; if it guesses wrong, pin it.
 
 ## HTTPS + fullscreen home-screen app
 
@@ -159,44 +220,56 @@ on the projector that turns button taps into local key events.
 
 ## Architecture
 
+One process, no backend, nothing served off the filesystem.
+
 ```
- iPhone           tlsproxy :8443 (root)                busybox httpd 127.0.0.1:8790
- home-screen ──TLS──▶ ┌──────────────────────┐              (loopback only)
-   app               │ token gate (cookie)  │  ──HTTP──▶  index.html
-                     │  ├ /ca.crt ungated   │             /cgi-bin/k  → input keyevent
-                     │  └ everything else   │             /cgi-bin/t  → input text
-                     │     401 without it   │             /cgi-bin/a  → fixed shortcuts only
-                     │                      │             /cgi-bin/m  → input tap/swipe
-                     │
-                     │ handled natively, never reaching busybox:
-                     │  /cgi-bin/m?rel|click|wheel
-                     │    └─▶ struct input_event → /dev/input/eventN
-                     │        ("Hi mouse"), fd held open
-                     │  /cgi-bin/k?long_ok
-                     │    └─▶ held EV_KEY 28 on "Hi keyboard" for 800 ms
-                     │        (real hold → app opens its context menu)
-                     │  /cgi-bin/a?list  → cmd package query-activities
-                     │  /cgi-bin/a?pkg=  → cmd activity start-activity
-                     │        (argv exec, no shell; the package must be in
-                     │         the device's own launcher list)
-                     └──────────────────────┘
- Android init ──supervises──▶ boot.sh → httpd + tlsproxy (restart on exit, start on boot)
+ phone                    tlsproxy :8443   (root, or uid 2000 "shell")
+ home-screen ──TLS──▶ ┌───────────────────────────────────────────────────┐
+   app                │ token gate (cookie)                               │
+                      │   /ca.crt ungated, and answered over PLAINTEXT    │
+                      │   everything else 401 without the cookie          │
+                      ├───────────────────────────────────────────────────┤
+                      │ /              → index.html, //go:embed'd         │
+                      │                  (no document root exists)        │
+                      │                                                   │
+                      │ evdev, fd held open — one 48-byte write:          │
+                      │ /cgi-bin/m?rel|click|wheel                        │
+                      │   └▶ struct input_event → /dev/input/eventN       │
+                      │      node found by CAPABILITY (EV_REL+REL_X/Y)    │
+                      │ /cgi-bin/k?long_ok                                │
+                      │   └▶ held EV_KEY 28 for 800 ms on the node with   │
+                      │      EV_KEY+KEY_ENTER — a real hold, so the app   │
+                      │      opens its context menu                       │
+                      │                                                   │
+                      │ argv exec, never a shell:                         │
+                      │ /cgi-bin/k?<name>  → input keyevent <code>        │
+                      │ /cgi-bin/t?<text>  → input text, char by char     │
+                      │ /cgi-bin/m?tap|swipe → input tap/swipe            │
+                      │ /cgi-bin/a?list    → cmd package query-activities │
+                      │ /cgi-bin/a?pkg=    → cmd activity start-activity  │
+                      │ /cgi-bin/a?set     → android.settings.SETTINGS    │
+                      └───────────────────────────────────────────────────┘
+ Android init ──supervises──▶ boot.sh → tlsproxy      (only where /vendor is writable;
+                                                       otherwise launched over adb)
 ```
+
+The `/cgi-bin/` paths are not CGI any more — there is no CGI, and no shell. They are kept
+as the wire format because the UI already speaks it and renaming them would buy nothing.
 
 ## Files
 
 | Path | What it is |
 |---|---|
-| `device/index.html` | the remote UI (D-pad, volume, media keys). Pure HTML/JS, no deps. |
-| `device/cgi-bin/k` | CGI: maps `?name` → Android keycode → `input keyevent`. **Edit here to add buttons.** `?long_ok` never reaches here — the proxy holds that key on the evdev node. |
-| `device/cgi-bin/t` | CGI: types text into the focused field (URL-decode → lowercase → char-by-char). |
-| `device/cgi-bin/a` | CGI: the **fixed** shortcut labels (`?cine`, `?vlc`, `?just`, `?next`, `?set`) via `resolve-activity` + `am start`. The query picks a `case` label; no package string from the network reaches the shell. `?list` and `?pkg=` never get here — the proxy handles those. |
-| `device/cgi-bin/m` | CGI: **legacy/absolute only** — `tap=X,Y`, `swipe=…`. The air-mouse ops (`rel`/`click`/`wheel`) are handled natively in the proxy and never reach this script; it's kept so those two still work. |
-| `device/boot.sh` | launcher run by init; waits for `/data`+cert, starts busybox httpd on **127.0.0.1**:8790, then `exec`s the TLS proxy (:8443). |
-| `device/tvremote.rc` | Android init service; starts `boot.sh` on `sys.boot_completed=1`, seclabel `u:r:su:s0`. |
-| `tls-proxy/main.go` | Go HTTPS front end (:8443): token gate, native pointer + held-key injection, app list/launch, reverse proxy to 127.0.0.1:8790, plaintext `/ca.crt`. |
-| `tls-proxy/main_test.go` | host-runnable tests: `input_event` byte layout (pointer + held key), device-node parsing by name, app-list parsing, package validation, route allowlist, and the auth gate (401/403/302, cookie flags, fail-closed). |
-| `build.sh` | cross-compiles the proxy to `device/bin/tlsproxy` (static armv7, cgo off) after running the tests. `deploy.sh` calls it. |
+| `config.env` | every tunable: adb endpoint, ports, install dir, mDNS name. Copy to `config.local.env` (gitignored) rather than editing this. |
+| `lib.sh` | sourced by every script: loads the config, connects adb, maps the device's ABI to a binary. |
+| `tls-proxy/ui/index.html` | the remote UI (D-pad, volume, media keys). Pure HTML/JS, no deps. Compiled into the binary with `//go:embed`. |
+| `tls-proxy/main.go` | the server: token gate, TLS/plaintext split, evdev pointer + held key, app list/launch, routing. |
+| `tls-proxy/input.go` | everything the CGI scripts used to do — keycodes, text, tap/swipe, settings — via `input`/`cmd` with argv exec, never a shell. |
+| `tls-proxy/discover.go` | finds the pointer and key nodes by capability bits from `/proc/bus/input/devices`, so no vendor device name is hardcoded. |
+| `tls-proxy/*_test.go` | host-runnable: `input_event` byte layout, capability detection against a real device dump, app-list parsing, package validation, URL decoding, tap/swipe validation, that no filesystem path is served, and the auth gate (401/403/302, cookie flags, fail-closed). |
+| `device/boot.sh` | launcher; derives its own install dir from `$0`, waits for `/data`, `exec`s the server with flags from the device config. |
+| `device/tvremote.rc` | Android init service; starts `boot.sh` on `sys.boot_completed=1`, seclabel `u:r:su:s0`. Only installed where `/vendor` is writable. |
+| `build.sh` | cross-compiles arm64-v8a, armeabi-v7a, x86_64 and x86 (static, cgo off) after running the tests. `deploy.sh` calls it and picks by the device's ABI. |
 | `device/token` (on device only) | the shared secret, `0600`, generated once by `deploy.sh`. Gitignored; never written to the Mac. |
 | `device/cert.pem` | fullchain (leaf + CA) served by the proxy. **Gitignored** — `gen-cert.sh` output. |
 | `device/ca.crt` | the CA cert the iPhone downloads + trusts. **Gitignored** — same. |
@@ -204,12 +277,13 @@ on the projector that turns button taps into local key events.
 | — | **No TLS material at all is committed.** The CA's private key signs every leaf your phone will trust, so publishing the CA (even just its public half) would either leak that trust or, since `gen-cert.sh` only creates a CA when `device/ca.pem` is missing, make a fresh clone skip CA generation and then fail signing against a `ca.key` it never had. Run `./gen-cert.sh` first. |
 | `gen-cert.sh` | (re)generate CA (once) + leaf (IP SAN, 397d). |
 | `deploy.sh` | push everything, set perms/SELinux contexts, (re)start. **Idempotent — this is how you update.** |
-| `restart.sh` | restart the running server, no redeploy. Kills a surviving `tlsproxy` too — a stale one holding `:8443` makes the new binary die on bind while the old one keeps serving. |
+| `restart.sh` | restart the running server, no redeploy. Kills a survivor first — one still holding `:8443` makes the new binary die on bind while the old one keeps serving, so a health check would pass against the code you thought you replaced. |
 | `uninstall.sh` | remove service + files. |
-| `logs.sh` | service state + httpd log + init logcat (troubleshooting). |
+| `logs.sh` | service state, listeners, processes, logs, init logcat (troubleshooting). |
 
-On-device install layout: web app in `/data/local/tmp/tvremote/`, service in
-`/vendor/etc/init/tvremote.rc`.
+On-device install layout: `/data/local/tmp/tvremote/` holds the binary, `boot.sh`, the
+cert pair, the config and the token — seven files, no document root. The boot service, where
+one is possible, is `/vendor/etc/init/tvremote.rc`.
 
 ---
 
