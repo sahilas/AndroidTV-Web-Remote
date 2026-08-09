@@ -14,14 +14,62 @@ fi
 echo ">> build tls proxy (all ABIs)"
 "$HERE/build.sh"
 
-echo ">> connect + root + remount"
-adb_connect || { echo "!! adb root refused (production build?) — boot persistence needs it"; exit 1; }
-adb -s "$TV" remount >/dev/null
+echo ">> connect + probe"
+if adb_connect; then ROOT=1; else ROOT=0; fi
 
 # Which binary this box needs. Selected from the device's own ABI, not assumed,
 # so the same repo deploys to an arm64 or x86_64 box unchanged.
 BIN="$(select_binary)" || exit 1
-echo "   device ABI -> $BIN"
+
+# Probe rather than assume. This projector is a userdebug build with SELinux
+# Permissive and a writable /vendor; a retail Android TV box is none of those,
+# and the difference decides whether boot persistence is possible at all.
+probe(){ adb -s "$TV" shell "$1" 2>/dev/null | tr -d '\r'; }
+SELINUX="$(probe getenforce)"
+BUILDTYPE="$(probe 'getprop ro.build.type')"
+if [ "$ROOT" = 1 ] && adb -s "$TV" remount >/dev/null 2>&1; then VENDOR_RW=1; else VENDOR_RW=0; fi
+
+echo "   ABI          $BIN"
+echo "   build        ${BUILDTYPE:-unknown}"
+echo "   adb root     $([ "$ROOT" = 1 ] && echo yes || echo 'no (shell uid)')"
+echo "   /vendor rw   $([ "$VENDOR_RW" = 1 ] && echo yes || echo no)"
+echo "   SELinux      ${SELINUX:-unknown}"
+
+# Boot persistence needs init, and init only reads service definitions from a
+# partition we cannot write on a locked box. Everything else -- serving, key
+# injection, the air-mouse -- works as the shell user, because shell is in the
+# `input` group. So a non-root box gets a fully working remote that does not
+# survive a reboot, rather than no remote at all.
+if [ "$VENDOR_RW" = 1 ]; then
+  PERSIST=1
+  echo "   tier         FULL (boot-persistent)"
+else
+  PERSIST=0
+  echo "   tier         NO-PERSIST (re-run ./deploy.sh after a reboot)"
+fi
+
+# Preflight: can this uid actually write the install dir? It can fail even
+# though /data/local/tmp is world-writable, because a previous root deploy
+# leaves root-owned files that the shell user cannot overwrite. Without this the
+# failure surfaces halfway through as a bare "Permission denied" from whichever
+# push happened to go first.
+# Testing that a NEW file can be created is not enough: /data/local/tmp/tvremote
+# is world-writable, so that succeeds while overwriting the root-owned token
+# still fails. Test the actual files this deploy will replace.
+adb -s "$TV" shell "mkdir -p $REMOTE/bin" >/dev/null 2>&1 || true
+unwritable=$(adb -s "$TV" shell "for f in $REMOTE/token $REMOTE/config $REMOTE/boot.sh \
+    $REMOTE/bin/tlsproxy $REMOTE/cert.pem $REMOTE/key.pem $REMOTE/ca.crt; do \
+      [ -e \$f ] && [ ! -w \$f ] && echo \$f; done; true" 2>/dev/null | tr -d '\r')
+if [ -n "$unwritable" ]; then
+  echo "!! these files in $REMOTE are not writable as $([ "$ROOT" = 1 ] && echo root || echo 'the shell user'):"
+  echo "$unwritable" | sed 's/^/     /'
+  if [ "$ROOT" = 0 ]; then
+    echo "   It was probably installed by an earlier root deploy. Either re-run"
+    echo "   with root, or clear it first:"
+    echo "     adb -s $TV root && adb -s $TV shell rm -rf $REMOTE"
+  fi
+  exit 1
+fi
 
 # ---- auth token ------------------------------------------------------------
 # Lives only on the device (0600). Reused across deploys on purpose: rotating it
@@ -71,24 +119,35 @@ adb -s "$TV" shell "rm -rf $REMOTE/cert.crt $REMOTE/index.html $REMOTE/cgi-bin \
   chmod 755 $REMOTE/boot.sh $REMOTE/bin/tlsproxy; \
   chmod 644 $REMOTE/cert.pem $REMOTE/ca.crt; chmod 600 $REMOTE/key.pem $REMOTE/token"
 
-echo ">> install boot service /vendor/etc/init/tvremote.rc"
-adb -s "$TV" push "$HERE/device/tvremote.rc" /vendor/etc/init/tvremote.rc
-adb -s "$TV" shell "chmod 644 /vendor/etc/init/tvremote.rc; chown root:root /vendor/etc/init/tvremote.rc; \
-  chcon u:object_r:vendor_configs_file:s0 /vendor/etc/init/tvremote.rc"
+if [ "$PERSIST" = 1 ]; then
+  echo ">> install boot service /vendor/etc/init/tvremote.rc"
+  adb -s "$TV" push "$HERE/device/tvremote.rc" /vendor/etc/init/tvremote.rc
+  adb -s "$TV" shell "chmod 644 /vendor/etc/init/tvremote.rc; chown root:root /vendor/etc/init/tvremote.rc; \
+    chcon u:object_r:vendor_configs_file:s0 /vendor/etc/init/tvremote.rc"
+else
+  echo ">> skipping boot service (/vendor not writable)"
+fi
 
 # A box upgraded from the busybox layout has an httpd that init never owned, so
 # ctl.restart leaves it running and it keeps serving the install dir on the LAN.
 echo ">> stop any stale busybox backend (pre-embed layout)"
-adb -s "$TV" shell "pkill -f 'busybox httpd' 2>/dev/null; true" >/dev/null 2>&1 || true
+# The [t]lsproxy bracket is not a typo: `pkill -f tlsproxy` also matches the
+# argv of the very shell running it, so it kills itself before reaching the
+# next command. The bracket makes the pattern not match its own literal.
+adb -s "$TV" shell "pkill -f '[b]usybox httpd' 2>/dev/null; true" >/dev/null 2>&1 || true
 
-echo ">> (re)start service now, no reboot needed"
+echo ">> (re)start now, no reboot needed"
 svc=$(adb -s "$TV" shell 'getprop init.svc.tvremote' | tr -d '\r')
-if [ -n "$svc" ]; then
-  # init knows the service (installed on a prior boot) -> just re-exec it
+if [ "$PERSIST" = 1 ] && [ -n "$svc" ]; then
+  # init owns the service (installed on a prior boot) -> just re-exec it
   adb -s "$TV" shell "setprop ctl.restart tvremote" >/dev/null 2>&1 || true
 else
-  # first deploy before any reboot: launch once, fully detached so adb returns
-  adb -s "$TV" shell "( setsid /system/bin/sh $REMOTE/boot.sh >$REMOTE/boot.log 2>&1 </dev/null & ); exit" >/dev/null 2>&1 || true
+  # No init service, or it exists but has never been started. Launch detached so
+  # adb returns; kill any predecessor first, because a survivor still holding
+  # :$HTTPS makes the new binary die on bind while the OLD one keeps serving --
+  # the verify below would then pass against code you thought you replaced.
+  adb -s "$TV" shell "pkill -f '[t]lsproxy' 2>/dev/null; sleep 1; \
+    ( setsid /system/bin/sh $REMOTE/boot.sh >$REMOTE/boot.log 2>&1 </dev/null & ); exit" >/dev/null 2>&1 || true
 fi
 
 echo ">> verify"
@@ -140,6 +199,13 @@ fail=0
 if [ "$fail" != 0 ]; then echo "FAILED (see: ./logs.sh)"; exit 1; fi
 
 echo "OK."
+if [ "$PERSIST" != 1 ]; then
+  echo
+  echo "NOTE: no boot persistence on this box — /vendor is not writable, and init"
+  echo "      only reads service definitions from a partition we cannot write."
+  echo "      Everything works until the box reboots; then re-run ./deploy.sh"
+  echo "      (or just: adb -s $TV shell \"( setsid /system/bin/sh $REMOTE/boot.sh & )\")"
+fi
 echo
 echo "REMOTE URL (contains the token — treat it like a password):"
 echo "  https://$IP:$HTTPS/?t=$tok"

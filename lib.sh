@@ -60,9 +60,17 @@ select_binary() {
   return 1
 }
 
+# TVR_FORCE_SHELL=1 deploys as the unprivileged shell user even on a box where
+# `adb root` would succeed. Two uses: it is the only way to exercise the
+# retail-box path on dev-build hardware, and it lets anyone run this without
+# handing the process root on a box where they would rather not.
 adb_connect() {
   adb connect "$TV" >/dev/null 2>&1 || true
-  adb -s "$TV" root >/dev/null 2>&1 || true
+  if [ "${TVR_FORCE_SHELL:-0}" = 1 ]; then
+    adb -s "$TV" unroot >/dev/null 2>&1 || true
+  else
+    adb -s "$TV" root >/dev/null 2>&1 || true
+  fi
   sleep 1
   adb connect "$TV" >/dev/null 2>&1 || true
   case "$(adb -s "$TV" shell id -u 2>/dev/null | tr -d '\r')" in

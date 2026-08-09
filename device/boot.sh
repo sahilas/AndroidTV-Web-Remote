@@ -7,7 +7,12 @@
 # embeds the UI and injects input itself, so this script only has to wait for
 # /data and exec it. That is what makes the same deploy work on a box with no
 # busybox.
-B=/data/local/tmp/tvremote
+# Derive the install dir from where THIS script lives, rather than hardcoding a
+# path. Hardcoding meant a deploy to a non-default REMOTE_DIR would read the
+# default location's config and then serve that installation's token and certs
+# -- one install silently operating on another's files.
+B="${0%/*}"
+[ "$B" = "$0" ] && B=/data/local/tmp/tvremote   # invoked with no path component
 
 # Written by deploy.sh. The defaults only apply if it is missing, which happens
 # if this runs before a deploy has finished.

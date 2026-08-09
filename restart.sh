@@ -10,7 +10,7 @@ adb_connect || echo "!! not root — restart may fail if the service was install
 # would pass against code you thought you had replaced.
 adb -s "$TV" shell "setprop ctl.restart tvremote 2>/dev/null; sleep 1; \
   if [ \"\$(getprop init.svc.tvremote)\" != running ]; then \
-    pkill -f 'busybox httpd' 2>/dev/null; pkill -f tlsproxy 2>/dev/null; \
+    pkill -f '[b]usybox httpd' 2>/dev/null; pkill -f '[t]lsproxy' 2>/dev/null; \
     nohup setsid $REMOTE/bin/tlsproxy -listen :$HTTPS -dir $REMOTE </dev/null >$REMOTE/proxy.log 2>&1 & fi"
 sleep 2
 tok=$(adb -s "$TV" shell "cat $REMOTE/token 2>/dev/null" | tr -d '\r\n' || true)
