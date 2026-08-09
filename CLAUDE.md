@@ -17,6 +17,7 @@ server, no scripting runtime.
 | `tls-proxy/main.go` | token gate, TLS/plaintext split on one port, evdev pointer + held key, app list/launch, routing, flags | 716 |
 | `tls-proxy/input.go` | everything that shells out to Android: keycodes, text, tap/swipe, settings intent | 209 |
 | `tls-proxy/discover.go` | finds input nodes by capability bits; `probeCaps()` for `/caps` | 203 |
+| `tls-proxy/provision.go` | generates CA/leaf/token on device when absent; never overwrites what is present | 300 |
 | `tls-proxy/ui/index.html` | the whole UI, `//go:embed`-ed into the binary | 382 |
 | `deploy.sh` | probe → push → restart → **assert** → report capabilities | 268 |
 | `lib.sh` | config loading, adb connect, ABI→binary map, reachability | 113 |
@@ -73,7 +74,9 @@ Tests are `tls-proxy/*_test.go` (553 lines) and run on the host — no device ne
 - **SELinux decides evdev, not the `input` group.** Permissive box: shell uid can write
   `/dev/input`, so air-mouse and hold-OK work without root. Enforcing box (retail): denied,
   including `/dev/uinput`. `probeCaps()` reports this; the UI hides what cannot work.
-- **The cert's IP SAN must match the box's address.** A DHCP move breaks TLS until
+- **The cert's IP SAN must match the box's address.** A DHCP move now reissues the leaf
+  automatically *if the box owns its CA*. If the cert came from `gen-cert.sh`, the box
+  refuses to reissue (that would change the trust anchor) and logs why — the fix is still
   `./gen-cert.sh && ./deploy.sh`.
 - **`build.sh` runs before every deploy on purpose.** Skipping it ships a stale binary while
   every source file looks correct.
