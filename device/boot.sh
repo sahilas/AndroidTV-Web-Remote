@@ -23,11 +23,16 @@ ADV_IP=
 [ -f "$B/config" ] && . "$B/config"
 B="$REMOTE_DIR"
 
-# Wait for the install to be complete, not merely present: on a cold boot /data
-# mounts after init starts services, and execing a half-pushed binary fails in a
-# way that looks like a crash loop.
+# Wait for the binary, and ONLY the binary. On a cold boot /data mounts after init
+# starts services, so execing a half-pushed file fails in a way that looks like a
+# crash loop.
+#
+# Deliberately not waiting for cert.pem any more: the server generates its own TLS
+# material when none is present, so waiting for a file the server itself creates is
+# a deadlock -- it waited the full 120s and then started anyway, with nothing
+# provisioned, on every boot of a self-provisioning box.
 i=0
-while { [ ! -x "$B/bin/tlsproxy" ] || [ ! -f "$B/cert.pem" ]; } && [ $i -lt 60 ]; do
+while [ ! -x "$B/bin/tlsproxy" ] && [ $i -lt 60 ]; do
   sleep 2; i=$((i+1))
 done
 

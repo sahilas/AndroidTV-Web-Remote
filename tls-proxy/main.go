@@ -719,6 +719,14 @@ func main() {
 		advIP = lanIP()
 	}
 
+	// Create anything missing before reading it. On a box provisioned by
+	// deploy.sh this is a no-op; when the companion app starts the server there
+	// is nothing staged at all, because an app cannot read the shell-owned
+	// staging directory and loosening it would expose the key to every app.
+	if err := provision(dir, advIP, mdnsHost); err != nil {
+		log.Printf("provision: %v", err)
+	}
+
 	loadToken()
 
 	cert, err := tls.LoadX509KeyPair(dir+"/cert.pem", dir+"/key.pem")

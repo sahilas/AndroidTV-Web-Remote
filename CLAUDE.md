@@ -37,7 +37,13 @@ Tests are `tls-proxy/*_test.go` (553 lines) and run on the host — no device ne
 4. **`deploy.sh`'s assertion block must keep asserting something real.** It is what caught
    the private-key exposure. If you remove a feature, replace its assertion; don't let it
    decay into a no-op.
-5. **No TLS material is committed.** `gen-cert.sh` only creates a CA when `device/ca.pem` is
+5. **The server provisions itself when material is missing, and never overwrites
+   material that is present.** `provision.go` generates a CA, a leaf and a token
+   into `-dir` if absent. A leaf pushed by `deploy.sh` is signed by a CA the phone
+   already trusts, so it is left alone even when stale — silently swapping the
+   trust anchor is worse than serving an expired cert. `boot.sh` must NOT wait for
+   `cert.pem`: the server creates it, so waiting deadlocks.
+6. **No TLS material is committed.** `gen-cert.sh` only creates a CA when `device/ca.pem` is
    absent, so a committed `ca.pem` makes a fresh clone skip CA generation and then fail
    signing against a `ca.key` it never had.
 

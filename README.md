@@ -192,9 +192,16 @@ Everything lives in `config.local.env` (your gitignored copy of `config.env`):
 | `REMOTE_DIR` | Where it installs on the box. |
 | `MDNS_HOST` | The `.local` name it advertises. |
 
-**If the box's IP changes** — it's usually a DHCP lease — the certificate no longer matches
-and your phone will complain. Re-run `./gen-cert.sh && ./deploy.sh`. Setting a fixed
-(reserved) IP on your router avoids this for good.
+**If the box's IP changes** — it's usually a DHCP lease — the server notices and reissues its
+certificate for the new address on the next start, keeping the same CA so your phone does
+*not* have to re-trust anything. If the certificate came from `./gen-cert.sh` on your Mac
+instead, the box will not overwrite it (that would swap the CA your phone trusts) and says so
+in the log — re-run `./gen-cert.sh && ./deploy.sh`. A reserved IP on your router avoids the
+whole issue.
+
+**You do not have to run `gen-cert.sh` at all.** If no certificate is present, the box
+generates its own CA, leaf and token on first start. That is how the companion app deploys,
+and it means the TLS private key is never copied over adb and never exists off the device.
 
 ### Overrides you probably will not need
 
