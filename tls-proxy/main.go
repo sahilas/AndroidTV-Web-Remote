@@ -418,17 +418,61 @@ func (a *appList) get(force bool) (map[string]string, error) {
 	if !force && a.comp != nil && time.Since(a.fetched) < appTTL {
 		return a.comp, nil
 	}
-	out, err := exec.Command(cmdBin, "package", "query-activities", "--brief",
-		"-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER").Output()
-	if err != nil {
-		return nil, err
-	}
-	m := parseActivities(string(out))
+	m := queryLaunchers()
 	if len(m) == 0 {
 		return nil, errors.New("no launcher activities found")
 	}
 	a.comp, a.fetched = m, time.Now()
 	return m, nil
+}
+
+// Android TV apps declare LEANBACK_LAUNCHER; phone-style apps declare LAUNCHER.
+// Neither is a superset of the other, so querying one alone hides apps.
+//
+// Measured: on a Google Android TV image com.android.tv.settings appears ONLY
+// under LEANBACK_LAUNCHER, so querying LAUNCHER alone made Settings unlaunchable.
+// On the HiSilicon projector the reverse holds -- three packages
+// (com.newlink.cast, com.newlink.filemanager, com.zhiying.bluetoothmodelservice)
+// appear only under LAUNCHER. Fire OS is TV-first and is expected to look like
+// the former, which is why this is a general fix rather than a Fire TV special
+// case.
+var launcherCategories = []string{
+	"android.intent.category.LEANBACK_LAUNCHER", // TV-native; wins on a tie
+	"android.intent.category.LAUNCHER",
+}
+
+// queryLaunchers merges both categories. LEANBACK is queried first so that on a
+// box where an app declares both, the TV-flavoured activity is the one launched.
+//
+// A failing category is skipped rather than fatal: a non-TV build may not know
+// LEANBACK_LAUNCHER at all, and losing the whole app list over that would be a
+// worse outcome than a shorter one.
+func queryLaunchers() map[string]string {
+	outs := make([]string, 0, len(launcherCategories))
+	for _, cat := range launcherCategories {
+		out, err := exec.Command(cmdBin, "package", "query-activities", "--brief",
+			"-a", "android.intent.action.MAIN", "-c", cat).Output()
+		if err != nil {
+			log.Printf("app list: %s: %v", cat, err)
+			continue
+		}
+		outs = append(outs, string(out))
+	}
+	return mergeActivities(outs...)
+}
+
+// mergeActivities unions parsed query output, earlier arguments winning ties.
+// Split out from queryLaunchers so the merge is testable without a device.
+func mergeActivities(outs ...string) map[string]string {
+	merged := map[string]string{}
+	for _, out := range outs {
+		for pkg, comp := range parseActivities(out) {
+			if _, dup := merged[pkg]; !dup {
+				merged[pkg] = comp
+			}
+		}
+	}
+	return merged
 }
 
 func (a *appList) launch(pkg string) error {

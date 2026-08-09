@@ -358,3 +358,61 @@ func TestDefHost(t *testing.T) {
 		t.Errorf("defHost() with no IP = %q, want %q", got, want)
 	}
 }
+
+// Real output shapes from both boxes. Neither launcher category is a superset of
+// the other, so querying one alone hides apps -- on the Google ATV image
+// com.android.tv.settings is LEANBACK-only, and on the projector three packages
+// are LAUNCHER-only.
+const leanbackOut = `2 activities found:
+  Activity #0:
+    priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true
+    com.android.tv.settings/.MainSettings
+  Activity #1:
+    com.example.both/.TvActivity
+`
+
+const launcherOut = `2 activities found:
+  Activity #0:
+    com.newlink.cast/.activity.MainActivity
+  Activity #1:
+    com.example.both/.PhoneActivity
+`
+
+func TestMergeActivitiesUnionsBothCategories(t *testing.T) {
+	m := mergeActivities(leanbackOut, launcherOut)
+
+	if len(m) != 3 {
+		t.Fatalf("merged %d packages, want 3: %v", len(m), m)
+	}
+	// LEANBACK-only: querying LAUNCHER alone made Settings unlaunchable.
+	if got := m["com.android.tv.settings"]; got != "com.android.tv.settings/.MainSettings" {
+		t.Errorf("leanback-only package missing or wrong: %q", got)
+	}
+	// LAUNCHER-only: must survive too, or the projector regresses.
+	if got := m["com.newlink.cast"]; got != "com.newlink.cast/.activity.MainActivity" {
+		t.Errorf("launcher-only package missing or wrong: %q", got)
+	}
+	// Declared in both: the TV-flavoured activity must win, since LEANBACK is
+	// queried first and that is the one a TV launcher would start.
+	if got := m["com.example.both"]; got != "com.example.both/.TvActivity" {
+		t.Errorf("tie broke to %q, want the LEANBACK activity", got)
+	}
+}
+
+// A category the box does not understand yields nothing; the other must still
+// produce a usable list rather than the whole thing failing.
+func TestMergeActivitiesToleratesAnEmptyCategory(t *testing.T) {
+	if m := mergeActivities("", launcherOut); len(m) != 2 {
+		t.Errorf("got %d packages from one good category, want 2: %v", len(m), m)
+	}
+	if m := mergeActivities("", ""); len(m) != 0 {
+		t.Errorf("got %d from no usable output, want 0", len(m))
+	}
+}
+
+// The order matters and is easy to reverse by accident.
+func TestLauncherCategoriesPreferLeanback(t *testing.T) {
+	if len(launcherCategories) != 2 || launcherCategories[0] != "android.intent.category.LEANBACK_LAUNCHER" {
+		t.Errorf("launcherCategories = %v, want LEANBACK first", launcherCategories)
+	}
+}

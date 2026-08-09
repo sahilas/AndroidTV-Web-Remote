@@ -76,7 +76,7 @@ the actual Android TV Remote Service on `6466`/`6467`. If `deploy.sh` reports
 - [Architecture](#architecture) · [Files](#files)
 - [Modes](#modes) · [Auth](#auth-token) · [Hold OK](#hold-ok--context-menu) · [Apps](#apps--4-editable-favourite-slots) · [Keyboard & voice](#keyboard--voice-dictation-input)
 - [Add or change buttons](#add-or-change-buttons) · [Troubleshooting](#troubleshooting)
-- [Verified on device](#verified-on-device) · [Security note](#security-note) · [Not supported yet](#not-supported-yet) · [Device facts](#device-facts-for-future-edits)
+- [Verified on device](#verified-on-device) · [Security note](#security-note) · [Fire TV](#fire-tv) · [Not supported yet](#not-supported-yet) · [Device facts](#device-facts-for-future-edits)
 
 ## Requirements (on the Mac)
 
@@ -582,16 +582,39 @@ recovery path if the remote wedges, so it's a deliberate trade, not an oversight
 
 Also note SELinux on this box is **Permissive**, so the `u:r:su:s0` service isn't confined.
 
-## Not supported yet
+## Fire TV
 
-**Fire TV / Fire OS.** Planned, not done. Amazon's boxes are the largest population this
-should serve and are exactly the case it was built for — no Google remote service — but
-nothing here has been run against one, so there is no claim to make. Two things are known to
-differ and would need checking first: Fire OS ships its own launcher and package set, so the
-app list and the Settings intent (`android.settings.SETTINGS`) may resolve differently; and
-network adb is enabled through Developer Options rather than a preset property, so the
-recovery path is not the same. Everything else — ABI selection, capability detection, the
-non-root deploy — is device-agnostic and should apply unchanged.
+Fire OS is the case this project was built for — Amazon's boxes ship no Google remote
+service at all. The code path is in place; **no Fire TV was available to test on**, so treat
+the setup below as documented-not-verified and please report what actually happens.
+
+**What was changed for it, and is verified elsewhere:** the app list now queries
+`LEANBACK_LAUNCHER` as well as `LAUNCHER`. Fire OS is TV-first, so its apps declare the
+leanback category, and querying `LAUNCHER` alone would have shown a short or empty list.
+Measured on a Google Android TV image, where `com.android.tv.settings` is leanback-only and
+was invisible before this. Settings also falls back to launching a known settings package
+(`com.amazon.tv.settings` first) if the generic action intent does not resolve.
+
+**Enabling network adb on a Fire TV:**
+
+1. Settings → My Fire TV → About → click the device name **7 times** to unlock Developer
+   Options.
+2. Settings → My Fire TV → **Developer Options** → turn **ADB Debugging** on.
+3. Note the IP: Settings → My Fire TV → About → Network.
+4. Put it in `config.local.env` as `TV_ADDR=<ip>:5555`, then
+   `./gen-cert.sh && ./deploy.sh`. Accept the authorisation prompt on the TV.
+
+**What to expect.** Fire OS is a locked `user` build with SELinux Enforcing, so `deploy.sh`
+should report the **NO-PERSIST** tier: keys, text, app launch and tap work; the touchpad and
+hold-OK will be unavailable and the UI will hide them; the server needs relaunching over adb
+after a reboot. Both Fire TV ABIs (armeabi-v7a on older sticks, arm64-v8a on 4K and Cube)
+are already built.
+
+**Most likely to need attention if it misbehaves:** Amazon replaces large parts of the
+framework, so `cmd package` / `cmd activity` output could be shaped differently enough to
+break parsing — `./logs.sh` and the `/caps` endpoint are where that would show.
+
+## Not supported yet
 
 **A real retail set-top.** Both boxes tested so far are a dev-build projector and an
 emulator. The emulator is the right *profile* (`user` build, Enforcing, `adb root` refused)

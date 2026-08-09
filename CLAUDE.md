@@ -86,7 +86,16 @@ manual curl. `TVR_FORCE_SHELL=1 ./deploy.sh` exercises the locked-box path on a 
 ## Ground truth
 
 Tested on two boxes: a HiSilicon Hi3751V350 projector (`userdebug`, Permissive, armv7) and
-a Google ATV emulator image (`user`, **Enforcing**, arm64, `adb root` refused). Fire TV is
-not supported yet. No physical retail box has been tested — the emulator has virtual input
-devices, so a real box's node layout is unverified. Do not upgrade those claims without a
-measurement.
+a Google ATV emulator image (`user`, **Enforcing**, arm64, `adb root` refused). No physical
+retail box has been tested — the emulator has virtual input devices, so a real box's node
+layout is unverified. Do not upgrade those claims without a measurement.
+
+**Fire TV**: the code path exists (leanback launcher query, settings package fallback) but
+has never run on Fire hardware. The `com.amazon.tv.settings` entry in `settingsPkgs` is the
+only speculative line in the codebase — it is guarded by a presence check against the
+device's own app list, so it is inert where the package does not exist.
+
+**App listing queries two categories.** `LEANBACK_LAUNCHER` and `LAUNCHER`, merged, leanback
+winning ties. Neither is a superset of the other and that is measured, not defensive: on the
+Google ATV image `com.android.tv.settings` is leanback-only; on the projector three packages
+are launcher-only. Dropping either category silently hides apps.

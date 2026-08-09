@@ -195,15 +195,51 @@ func tapSwipe(w http.ResponseWriter, op, val string) {
 // LAUNCHER activity for Settings at all, so it cannot be launched by package
 // the way every other app is. The action intent resolves to whatever the box's
 // own settings app happens to be, which is the portable way to ask.
+// settingsPkgs are the settings apps to fall back to, by package, if the action
+// intent does not resolve. Ordered most-specific first. Only tried when the
+// intent fails, and only if the package is actually in the device's own launcher
+// list -- so an entry that does not exist on a given box costs nothing and can
+// never launch something unexpected.
+var settingsPkgs = []string{
+	"com.amazon.tv.settings",  // Fire OS
+	"com.android.tv.settings", // AOSP Android TV
+	"com.android.settings",    // phone-style AOSP
+}
+
+// openSettings handles /cgi-bin/a?set.
+//
+// Settings is special-cased rather than launched by package like every other app
+// because on some builds it exposes no launcher activity at all -- the HiSilicon
+// projector is one, where it has to go through the action intent and lands on
+// Whale OS's own com.zhiying.settings. The action intent is therefore tried
+// first: it is the portable way to ask, and it resolves to whatever the box
+// considers its settings app.
 func openSettings(w http.ResponseWriter) {
-	cmd := exec.Command(cmdBin, "activity", "start-activity", "-a", "android.settings.SETTINGS")
-	out, err := cmd.CombinedOutput()
+	out, err := exec.Command(cmdBin, "activity", "start-activity",
+		"-a", "android.settings.SETTINGS").CombinedOutput()
 	// `am`/`cmd activity` prints "Error:" but does not reliably exit nonzero, so
 	// the output has to be checked too.
-	if err != nil || strings.Contains(string(out), "Error:") {
-		log.Printf("settings: %v: %s", err, strings.TrimSpace(string(out)))
-		http.Error(w, "could not open settings", http.StatusInternalServerError)
+	if err == nil && !strings.Contains(string(out), "Error:") {
+		ok(w)
 		return
 	}
-	ok(w)
+	log.Printf("settings: action intent failed (%v: %s), trying known packages",
+		err, strings.TrimSpace(string(out)))
+
+	// Fall back to a real settings package if the box has one. Fire OS is the
+	// case this exists for -- UNTESTED there, since no Fire TV was available.
+	comps, lerr := al.get(false)
+	if lerr == nil {
+		for _, pkg := range settingsPkgs {
+			if _, found := comps[pkg]; !found {
+				continue
+			}
+			if err := al.launch(pkg); err == nil {
+				ok(w)
+				return
+			}
+			log.Printf("settings: %s failed to launch", pkg)
+		}
+	}
+	http.Error(w, "could not open settings", http.StatusInternalServerError)
 }
