@@ -27,6 +27,38 @@ fi
 # it is the unprivileged `shell` user. Callers decide whether that is fatal:
 # pushing to /data/local/tmp and injecting input both work as `shell`, but
 # writing /vendor (the boot service) does not.
+# Map an Android ABI to the binary build.sh produced for it. Keep in sync with
+# goenv_for() in build.sh.
+abi_to_binary() {
+  case "$1" in
+    arm64-v8a)   echo "tlsproxy-arm64-v8a" ;;
+    armeabi-v7a|armeabi) echo "tlsproxy-armeabi-v7a" ;;
+    x86_64)      echo "tlsproxy-x86_64" ;;
+    x86)         echo "tlsproxy-x86" ;;
+    *)           return 1 ;;
+  esac
+}
+
+# Pick the binary for the connected device. Prefers ro.product.cpu.abi, then
+# walks ro.product.cpu.abilist -- a 64-bit box that can also run 32-bit code
+# lists both, and we want the primary one to win rather than whichever we
+# happened to check first.
+select_binary() {
+  local abi abilist bin
+  abi="$(adb -s "$TV" shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\r')"
+  if bin="$(abi_to_binary "$abi")"; then echo "$bin"; return 0; fi
+
+  abilist="$(adb -s "$TV" shell getprop ro.product.cpu.abilist 2>/dev/null | tr -d '\r')"
+  local IFS=,
+  for a in $abilist; do
+    if bin="$(abi_to_binary "$a")"; then echo "$bin"; return 0; fi
+  done
+
+  echo "!! unsupported CPU ABI: '$abi' (abilist: '$abilist')" >&2
+  echo "   supported: arm64-v8a, armeabi-v7a, x86_64, x86" >&2
+  return 1
+}
+
 adb_connect() {
   adb connect "$TV" >/dev/null 2>&1 || true
   adb -s "$TV" root >/dev/null 2>&1 || true

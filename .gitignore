@@ -15,7 +15,7 @@ device/*.srl
 device/*.csr
 
 # Build output + on-device state
-device/bin/tlsproxy
+device/bin/
 device/token
 device/**/httpd.log
 *.log

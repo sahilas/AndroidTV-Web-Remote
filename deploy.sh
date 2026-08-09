@@ -11,12 +11,17 @@ fi
 
 # Always rebuild the proxy. Skipping this ships a stale binary while every source
 # file looks correct — the most confusing possible failure.
-echo ">> build tls proxy (armv7)"
+echo ">> build tls proxy (all ABIs)"
 "$HERE/build.sh"
 
 echo ">> connect + root + remount"
 adb_connect || { echo "!! adb root refused (production build?) — boot persistence needs it"; exit 1; }
 adb -s "$TV" remount >/dev/null
+
+# Which binary this box needs. Selected from the device's own ABI, not assumed,
+# so the same repo deploys to an arm64 or x86_64 box unchanged.
+BIN="$(select_binary)" || exit 1
+echo "   device ABI -> $BIN"
 
 # ---- auth token ------------------------------------------------------------
 # Lives only on the device (0600). Reused across deploys on purpose: rotating it
@@ -50,7 +55,7 @@ adb -s "$TV" push "$HERE/device/config" "$REMOTE/config" >/dev/null
 adb -s "$TV" push "$HERE/device/index.html" "$REMOTE/index.html"
 adb -s "$TV" push "$HERE/device/cgi-bin/."  "$REMOTE/cgi-bin/"    # all CGIs
 adb -s "$TV" push "$HERE/device/boot.sh"    "$REMOTE/boot.sh"
-adb -s "$TV" push "$HERE/device/bin/tlsproxy" "$REMOTE/bin/tlsproxy"
+adb -s "$TV" push "$HERE/device/bin/$BIN" "$REMOTE/bin/tlsproxy"
 adb -s "$TV" push "$HERE/device/cert.pem"   "$REMOTE/cert.pem"   # fullchain: leaf + CA
 adb -s "$TV" push "$HERE/device/key.pem"    "$REMOTE/key.pem"
 adb -s "$TV" push "$HERE/device/ca.crt"     "$REMOTE/ca.crt"     # CA for iPhone to trust
