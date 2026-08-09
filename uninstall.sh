@@ -1,12 +1,10 @@
 #!/bin/bash
 # Remove the projector web remote (boot service + files). Reverses deploy.sh.
 set -euo pipefail
-TV=192.168.220.53:5555
-REMOTE=/data/local/tmp/tvremote
+. "$(cd "$(dirname "$0")" && pwd)/lib.sh"   # TV, IP, PORT, HTTPS, REMOTE
 
-adb connect "$TV" >/dev/null
-adb -s "$TV" root >/dev/null; sleep 1; adb connect "$TV" >/dev/null
-adb -s "$TV" remount >/dev/null
+adb_connect || echo "!! not root — cannot remove the /vendor boot service"
+adb -s "$TV" remount >/dev/null 2>&1 || true
 
 echo ">> stop service + kill httpd/proxy"
 adb -s "$TV" shell "setprop ctl.stop tvremote 2>/dev/null; pkill -f 'busybox httpd' 2>/dev/null; pkill -f tlsproxy 2>/dev/null; true"

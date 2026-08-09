@@ -23,3 +23,7 @@ device/**/httpd.log
 # Local noise
 .DS_Store
 artifacts/
+
+# Local config override (your device address) and its device-side copy.
+config.local.env
+device/config

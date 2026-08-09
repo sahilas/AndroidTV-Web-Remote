@@ -1,9 +1,8 @@
 #!/bin/bash
 # Restart the running remote without redeploying (e.g. after it wedged). No reboot.
 set -euo pipefail
-TV=192.168.220.53:5555; PORT=8790; HTTPS=8443; REMOTE=/data/local/tmp/tvremote
-IP="${TV%:*}"
-adb connect "$TV" >/dev/null; adb -s "$TV" root >/dev/null; sleep 1; adb connect "$TV" >/dev/null
+. "$(cd "$(dirname "$0")" && pwd)/lib.sh"   # TV, IP, PORT, HTTPS, REMOTE
+adb_connect || echo "!! not root — restart may fail if the service was installed as root"
 # Fallback path keeps the LOOPBACK-ONLY bind. Binding 0.0.0.0 here would quietly
 # re-expose the root CGIs to the whole WiFi on the next wedge-recovery.
 # It also kills any surviving tlsproxy: a stale one still holding :8443 makes the
@@ -13,7 +12,7 @@ adb -s "$TV" shell "setprop ctl.restart tvremote 2>/dev/null; sleep 1; \
   if [ \"\$(getprop init.svc.tvremote)\" != running ]; then \
     pkill -f 'busybox httpd' 2>/dev/null; pkill -f tlsproxy 2>/dev/null; \
     nohup setsid /vendor/bin/busybox httpd -f -p 127.0.0.1:$PORT -h $REMOTE </dev/null >$REMOTE/httpd.log 2>&1 & \
-    nohup setsid $REMOTE/bin/tlsproxy </dev/null >$REMOTE/proxy.log 2>&1 & fi"
+    nohup setsid $REMOTE/bin/tlsproxy -listen :$HTTPS -backend http://127.0.0.1:$PORT -dir $REMOTE </dev/null >$REMOTE/proxy.log 2>&1 & fi"
 sleep 2
 tok=$(adb -s "$TV" shell "cat $REMOTE/token 2>/dev/null" | tr -d '\r\n' || true)
 code(){ local c; c=$(curl -sk -m6 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null) || c=000; echo "${c:-000}"; }

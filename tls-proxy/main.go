@@ -24,6 +24,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -43,18 +44,34 @@ import (
 	"github.com/grandcat/zeroconf"
 )
 
-const (
+// Runtime configuration. These are vars, not consts, because the same binary has
+// to run on any box -- boot.sh passes the values from the device's config file.
+// The defaults are what a bare `./tlsproxy` with no flags gets, so the binary is
+// still runnable by hand for debugging.
+var (
 	listen   = ":8443"
 	backend  = "http://127.0.0.1:8790"
 	dir      = "/data/local/tmp/tvremote"
-	defHost  = "192.168.220.53:8443"
-	ip       = "192.168.220.53"
-	mdnsHost = "projectorremote" // advertised as projectorremote.local
-
-	caFile    = dir + "/ca.crt"
-	tokenFile = dir + "/token"
-	cookie    = "tvr"
+	advIP    = "" // advertised over mDNS; empty = autodetect this host's LAN IP
+	mdnsHost = "projectorremote"
 )
+
+const cookie = "tvr"
+
+// Derived from dir, so they cannot be consts. Functions rather than vars because
+// dir is not final until flag.Parse has run.
+func caFile() string    { return dir + "/ca.crt" }
+func tokenFile() string { return dir + "/token" }
+
+// defHost is only used to build the redirect target for a plaintext request that
+// arrived with no Host header -- essentially only hand-rolled clients. A real
+// browser always sends one and that value wins.
+func defHost() string {
+	if advIP == "" {
+		return "localhost" + listen
+	}
+	return advIP + listen
+}
 
 // ---------------------------------------------------------------- auth
 
@@ -65,14 +82,14 @@ const (
 var token string
 
 func loadToken() {
-	b, err := os.ReadFile(tokenFile)
+	b, err := os.ReadFile(tokenFile())
 	if err != nil {
 		log.Printf("token: %v -- REFUSING ALL REQUESTS, run ./deploy.sh", err)
 		return
 	}
 	token = strings.TrimSpace(string(b))
 	if token == "" {
-		log.Printf("token: %s is empty -- REFUSING ALL REQUESTS", tokenFile)
+		log.Printf("token: %s is empty -- REFUSING ALL REQUESTS", tokenFile())
 	}
 }
 
@@ -83,7 +100,7 @@ func tokenOK(v string) bool {
 // serveCA hands out the local CA. Never gated: it is a public certificate, and
 // gating it would make a fresh phone unable to bootstrap trust.
 func serveCA(w http.ResponseWriter) {
-	b, err := os.ReadFile(caFile)
+	b, err := os.ReadFile(caFile())
 	if err != nil {
 		http.Error(w, "no ca.crt on device", http.StatusNotFound)
 		return
@@ -581,7 +598,7 @@ func (l splitListener) Accept() (net.Conn, error) {
 func plaintext(c net.Conn) {
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(10 * time.Second))
-	host, path := defHost, "/"
+	host, path := defHost(), "/"
 	req, err := http.ReadRequest(bufio.NewReader(c))
 	if err == nil {
 		if req.Host != "" {
@@ -593,7 +610,7 @@ func plaintext(c net.Conn) {
 		// certificate until this file is installed and trusted. This is the
 		// bootstrap path that lets busybox httpd stay bound to localhost.
 		if req.URL.Path == "/ca.crt" {
-			if ca, e := os.ReadFile(caFile); e == nil {
+			if ca, e := os.ReadFile(caFile()); e == nil {
 				fmt.Fprintf(c, "HTTP/1.1 200 OK\r\nContent-Type: application/x-x509-ca-cert\r\n"+
 					"Content-Length: %d\r\nConnection: close\r\n\r\n", len(ca))
 				c.Write(ca)
@@ -607,7 +624,54 @@ func plaintext(c net.Conn) {
 
 // ---------------------------------------------------------------- main
 
+// listenPort pulls the port out of a listen address so mDNS advertises the port
+// we are actually bound to. Announcing a hardcoded 8443 while listening on
+// something else sends every mDNS client to a closed port and fails silently --
+// the service resolves, then nothing connects.
+func listenPort(addr string) int {
+	_, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil || n < 1 || n > 65535 {
+		return 0
+	}
+	return n
+}
+
+// lanIP finds this host's primary non-loopback IPv4. Used when -ip is not given,
+// so a box that got its address from DHCP still advertises the right one over
+// mDNS without anybody having to configure it.
+func lanIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet)
+		if !ok || n.IP.IsLoopback() {
+			continue
+		}
+		if v4 := n.IP.To4(); v4 != nil {
+			return v4.String()
+		}
+	}
+	return ""
+}
+
 func main() {
+	flag.StringVar(&listen, "listen", listen, "HTTPS listen address, e.g. :8443")
+	flag.StringVar(&backend, "backend", backend, "loopback HTTP backend URL")
+	flag.StringVar(&dir, "dir", dir, "on-device install directory")
+	flag.StringVar(&advIP, "ip", advIP, "IP advertised over mDNS (empty = autodetect)")
+	flag.StringVar(&mdnsHost, "mdns-host", mdnsHost, "mDNS name, advertised as <name>.local")
+	flag.Parse()
+
+	if advIP == "" {
+		advIP = lanIP()
+	}
+
 	loadToken()
 
 	b, err := url.Parse(backend)
@@ -622,14 +686,23 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// advertise projectorremote.local (A -> ip) over mDNS/Bonjour so iOS can use a
+	// advertise <mdnsHost>.local (A -> advIP) over mDNS/Bonjour so iOS can use a
 	// hostname instead of the bare IP (Safari won't show IP certs as secure).
-	if s, err := zeroconf.RegisterProxy("Projector Remote", "_https._tcp", "local.",
-		8443, mdnsHost, []string{ip}, []string{"path=/"}, nil); err != nil {
+	//
+	// The advertised port is parsed back out of `listen` rather than hardcoded:
+	// announcing 8443 while actually listening elsewhere sends every mDNS client
+	// to a closed port, and it fails silently.
+	port := listenPort(listen)
+	if advIP == "" {
+		log.Printf("mdns: no non-loopback IPv4 found -- not advertising")
+	} else if port == 0 {
+		log.Printf("mdns: cannot parse a port out of %q -- not advertising", listen)
+	} else if s, err := zeroconf.RegisterProxy("Projector Remote", "_https._tcp", "local.",
+		port, mdnsHost, []string{advIP}, []string{"path=/"}, nil); err != nil {
 		log.Printf("mdns: %v", err)
 	} else {
 		defer s.Shutdown()
-		log.Printf("mDNS: %s.local -> %s", mdnsHost, ip)
+		log.Printf("mDNS: %s.local -> %s:%d", mdnsHost, advIP, port)
 	}
 
 	srv := &http.Server{Handler: gate(routes(httputil.NewSingleHostReverseProxy(b)))}

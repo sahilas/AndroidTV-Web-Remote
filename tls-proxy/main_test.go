@@ -311,3 +311,42 @@ func TestGateFailsClosedWithoutToken(t *testing.T) {
 		t.Fatal("empty token accepted")
 	}
 }
+
+// mDNS must advertise the port we actually bound. A wrong value here fails
+// silently: the service resolves and then nothing connects to it.
+func TestListenPort(t *testing.T) {
+	for _, c := range []struct {
+		addr string
+		want int
+	}{
+		{":8443", 8443},
+		{"0.0.0.0:8443", 8443},
+		{"127.0.0.1:9000", 9000},
+		{"[::]:8443", 8443},
+		{"8443", 0},      // no colon -- not a valid listen address
+		{":", 0},         // empty port
+		{":notaport", 0}, // non-numeric
+		{":0", 0},        // port 0 means "any", nothing to advertise
+		{":70000", 0},    // out of range
+	} {
+		if got := listenPort(c.addr); got != c.want {
+			t.Errorf("listenPort(%q) = %d, want %d", c.addr, got, c.want)
+		}
+	}
+}
+
+// defHost only backstops a plaintext request with no Host header. It must still
+// carry the configured port, or the redirect points at the wrong service.
+func TestDefHost(t *testing.T) {
+	oIP, oLn := advIP, listen
+	defer func() { advIP, listen = oIP, oLn }()
+
+	advIP, listen = "10.0.0.5", ":9443"
+	if got, want := defHost(), "10.0.0.5:9443"; got != want {
+		t.Errorf("defHost() = %q, want %q", got, want)
+	}
+	advIP = ""
+	if got, want := defHost(), "localhost:9443"; got != want {
+		t.Errorf("defHost() with no IP = %q, want %q", got, want)
+	}
+}

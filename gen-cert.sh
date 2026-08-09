@@ -4,8 +4,8 @@
 # under it. Verified against Apple's own evaluator (security verify-cert).
 # Renewing the leaf later needs NO re-trust on the phone (same CA).
 set -euo pipefail
-IP=192.168.220.53
-D="$(cd "$(dirname "$0")" && pwd)/device"
+. "$(cd "$(dirname "$0")" && pwd)/lib.sh"   # IP, MDNS_HOST
+D="$HERE/device"
 
 # --- CA (this is what the iPhone downloads + trusts) ---
 if [ ! -f "$D/ca.pem" ]; then
@@ -18,7 +18,7 @@ fi
 
 # --- leaf signed by the CA ---
 openssl req -newkey rsa:2048 -nodes -keyout "$D/leaf.key" -out "$D/leaf.csr" -subj "/CN=$IP"
-HOSTNAME=projectorremote.local
+HOSTNAME="$MDNS_HOST.local"
 openssl x509 -req -in "$D/leaf.csr" -CA "$D/ca.pem" -CAkey "$D/ca.key" -CAcreateserial \
   -out "$D/leaf.pem" -days 397 \
   -extfile <(printf "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,IP:%s\n" "$HOSTNAME" "$IP")
