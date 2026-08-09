@@ -65,6 +65,10 @@ gesture you had no way to know was unsupported.
 the actual Android TV Remote Service on `6466`/`6467`. If `deploy.sh` reports
 `address already in use`, set a different `HTTPS_PORT` in `config.local.env`.
 
+> **Working on this with an AI agent?** Read [CLAUDE.md](CLAUDE.md) instead of this file.
+> It is a ~90-line map of the codebase — what each file owns, the invariants, and the traps
+> that have already cost time — and Claude Code loads it automatically.
+
 ## Contents
 
 - [Requirements](#requirements-on-the-mac) · [Quick start](#quick-start--update-workflow) · [Point it at your device](#point-it-at-your-device)
