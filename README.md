@@ -1,50 +1,113 @@
 # Android TV Web Remote
 
-A phone-friendly web remote for **Android TV boxes that Google's own remote app cannot
-control** — the ones that report as "Android TV" but are not Google-certified, so they never
-advertise `_androidtvremote2._tcp` and have no Cast. Open a URL in any phone browser and
-control the box. No app store, no Google account, no companion PC, no app to install on
-the phone.
+**Turn your phone into a remote for an Android TV box, using just a web browser.**
 
-It is a **single static Go binary** pushed to the box over network `adb`. It serves the UI
-over HTTPS and injects input itself. There is no web server to install, no busybox, no
-scripting runtime, and nothing written outside `/data/local/tmp` unless boot persistence is
-possible.
+Lost the remote? Got a TV box that Google's remote app refuses to see? Open a web page on
+your phone and control the box — D-pad, volume, play/pause, typing, launching apps.
 
-- **Remote URL:** **`https://<box-ip>:8443/?t=<token>`** — a fullscreen home-screen app once
-  the CA is trusted once and the token used once. `./deploy.sh` prints the exact URL.
-  `https://<mdns-host>.local:8443` is also advertised and is in the cert's SAN, but only
-  resolves on networks that pass mDNS between clients, so the IP is the reliable address.
-- **Two modes** (tabs at top, remembered per phone): **Keys** (D-pad/media) and **Touchpad**
-  (air-mouse: drag = move cursor, tap = click, 2-finger = scroll). A 4-slot app row
-  (tap = launch, hold = change app) and a keyboard bar are shared by both.
+- **No app to install** on your phone. It's a web page.
+- **No account, no cloud.** Everything stays on your home WiFi.
+- **Nothing to install on the TV** either — one small program is copied over and runs there.
 
-> **Tested on two boxes**, deliberately unalike: a HiSilicon Hi3751V350 projector
-> (Android 12, `userdebug`, SELinux Permissive, armv7) and a Google Android TV emulator
-> image (Android 12, `user`, SELinux **Enforcing**, arm64, `adb root` refused). Between them
-> they cover both ABIs, both SELinux modes, and both the rooted and locked cases. See
-> [Will it work on your box?](#will-it-work-on-your-box) for what that measured.
-> `192.168.220.53` throughout is the projector's DHCP address, used as a concrete example.
+*Why Google's app doesn't work on these boxes: many cheap "Android TV" projectors and boxes
+aren't Google-certified, so they don't broadcast the service the official remote looks for.
+It can never find them. [Longer explanation below](#why-this-exists-root-cause).*
+
+---
+
+## What you need
+
+| | |
+|---|---|
+| **A TV box** | Any Android TV / Google TV / projector running Android. It must let you turn on "ADB debugging" (a developer setting — see step 1). |
+| **A computer** | Mac or Linux, on the **same WiFi** as the TV box. This is only needed for setup; afterwards you use your phone. |
+| **Two free tools** | `adb` and `Go`. Install on Mac with:<br>`brew install android-platform-tools go` |
+
+You do **not** need to root or modify your TV box.
+
+## Setup
+
+### Step 1 — Turn on ADB debugging on the TV box
+
+This is the switch that lets your computer talk to the box. It's hidden by default.
+
+On most Android TV boxes: **Settings → Device Preferences → About →** click **Build**
+seven times. You'll see "You are now a developer". Then go back to
+**Settings → Device Preferences → Developer options** and turn on **ADB debugging** (also
+called "USB debugging" or "Network debugging").
+
+On a **Fire TV**: Settings → My Fire TV → About → click the device name seven times, then
+Developer Options → ADB Debugging.
+
+Then find the box's IP address — usually **Settings → Network** — something like
+`192.168.1.42`.
+
+### Step 2 — Tell the project where your box is
+
+```bash
+cp config.env config.local.env
+```
+
+Open `config.local.env` and put in your box's IP address:
+
+```bash
+TV_ADDR=192.168.1.42:5555
+```
+
+(`5555` is the standard port — leave it. `config.local.env` is ignored by git, so your
+address never gets committed.)
+
+### Step 3 — Run it
+
+```bash
+./gen-cert.sh    # once — creates the security certificate
+./deploy.sh      # copies everything over and starts it
+```
+
+The first time, your TV may show a popup asking you to allow the connection — say yes
+(and tick "always allow").
+
+**When it finishes, `deploy.sh` prints your remote's web address and the exact steps to
+set it up on your phone.** Follow what it prints — including a one-time certificate step
+that lets the page run fullscreen like a real app.
+
+That's it. To update later, just run `./deploy.sh` again.
+
+### Something went wrong?
+
+`./deploy.sh` checks its own work and refuses to claim success unless everything passes. If
+it fails it prints the reason and the TV box's own log. Run `./logs.sh` to see what the
+box thinks is happening. There's a [troubleshooting section](#troubleshooting) further down.
 
 ## Will it work on your box?
 
-`./deploy.sh` probes before changing anything, and after a successful deploy asks the
-running server what it can actually drive. You get a feature list, not a promise.
+Almost certainly for the basics. `./deploy.sh` tests your specific box and prints exactly
+what it can do, so you never have to guess.
 
-| Feature | Needs | Retail box (Enforcing, no root) |
-|---|---|---|
-| D-pad, media, volume, **text**, **app launch**, absolute tap | network `adb` — nothing else | ✅ works |
-| **Touchpad / air-mouse** | writable `/dev/input` | ❌ unavailable |
-| **Hold-OK → context menu** | writable `/dev/input` | ❌ falls back to a normal OK |
-| **Boot persistence** | `adb root` + writable `/vendor` | ❌ relaunch over adb after reboot |
+| Feature | Works on a normal, unmodified TV box? |
+|---|---|
+| D-pad, volume, play/pause, back, home | ✅ yes |
+| Typing into search boxes | ✅ yes |
+| Launching apps | ✅ yes |
+| **Touchpad** (move a mouse cursor) | ⚠️ only on rooted / developer-build boxes |
+| **Hold-OK** (opens an app's context menu) | ⚠️ same |
+| **Survives a reboot** | ⚠️ same — otherwise re-run `./deploy.sh` after restarting the box |
 
-**SELinux is what decides the two evdev features, and it is stricter than file permissions
-suggest.** The `shell` user is in the `input` group on both boxes tested, and on a
-**Permissive** build that is enough — everything works as uid 2000, no root. But on an
-**Enforcing** build, policy denies the shell domain `/dev/input` *and* `/dev/uinput`
-regardless of group, so `sendevent` and any direct evdev write fail. Keys, text and app
-launch are unaffected because those go through Android's `input` command, which never
-touches evdev.
+The remote hides the features your box can't do, so you won't see buttons that don't work.
+
+<details>
+<summary><b>The technical reason, if you care</b></summary>
+
+The touchpad and hold-OK write directly to the Linux input devices (`/dev/input`). Whether
+that's allowed is decided by SELinux, and it's stricter than file permissions suggest. The
+`shell` user is in the `input` group on both boxes tested, and on a **Permissive** build
+that's enough — everything works without root. On an **Enforcing** build, which is what a
+normal retail box is, policy denies the shell domain `/dev/input` *and* `/dev/uinput`
+regardless of group. Keys, text and app launching are unaffected because those go through
+Android's own `input` command, which never touches evdev.
+
+Boot persistence needs `init` to read a service definition from a partition a locked box
+won't let you write.
 
 Measured, not inferred:
 
@@ -57,80 +120,55 @@ Measured, not inferred:
 | air-mouse, hold-OK | ✅ (even as uid 2000) | ❌ `/proc/bus/input/devices`: permission denied |
 | boot persistence | ✅ | ❌ |
 
-The UI adapts on its own: it fetches `/caps` on load, hides the Touchpad tab where the
-pointer is unavailable, and turns hold-OK into a plain OK rather than showing an error on a
-gesture you had no way to know was unsupported.
-
 **Port conflicts are real.** The Google ATV image already had something on `8443`, and ships
 the actual Android TV Remote Service on `6466`/`6467`. If `deploy.sh` reports
 `address already in use`, set a different `HTTPS_PORT` in `config.local.env`.
 
+</details>
+
+> **Tested on two boxes**, deliberately unalike: a HiSilicon Hi3751V350 projector
+> (Android 12, `userdebug`, SELinux Permissive, armv7) and a Google Android TV emulator
+> image (Android 12, `user`, SELinux **Enforcing**, arm64, `adb root` refused). Between them
+> they cover both ABIs, both SELinux modes, and both the rooted and locked cases.
+> `192.168.220.53` throughout is the projector's DHCP address, used as a concrete example.
+
 > **Working on this with an AI agent?** Read [CLAUDE.md](CLAUDE.md) instead of this file.
-> It is a ~90-line map of the codebase — what each file owns, the invariants, and the traps
+> It is a ~100-line map of the codebase — what each file owns, the invariants, and the traps
 > that have already cost time — and Claude Code loads it automatically.
 
-## Contents
+---
 
-- [Requirements](#requirements-on-the-mac) · [Quick start](#quick-start--update-workflow) · [Point it at your device](#point-it-at-your-device)
-- [Why this exists](#why-this-exists-root-cause) — why the Google TV remote app can never work here
-- [Architecture](#architecture) · [Files](#files)
-- [Modes](#modes) · [Auth](#auth-token) · [Hold OK](#hold-ok--context-menu) · [Apps](#apps--4-editable-favourite-slots) · [Keyboard & voice](#keyboard--voice-dictation-input)
-- [Add or change buttons](#add-or-change-buttons) · [Troubleshooting](#troubleshooting)
-- [Verified on device](#verified-on-device) · [Security note](#security-note) · [Fire TV](#fire-tv) · [Not supported yet](#not-supported-yet) · [Device facts](#device-facts-for-future-edits)
+# How it works
 
-## Requirements (on the Mac)
+*Everything below is optional reading — the setup above is all you need to use it.*
 
-- `adb` (`brew install android-platform-tools`) and **Go 1.25+** (to cross-compile the server —
-  `golang.org/x/crypto` requires it).
-- **On the box: nothing.** No busybox, no web server, no scripting runtime. That is the point —
-  the binary is static and self-contained, so there is nothing to install or depend on.
-- The box reachable on the LAN with network adb up (see
-  [Point it at your device](#point-it-at-your-device)).
+[Using it](#using-the-remote) · [Commands](#everyday-commands) · [Settings](#changing-the-settings) ·
+[Why this exists](#why-this-exists-root-cause) · [Architecture](#architecture) · [Files](#files) ·
+[Buttons & modes](#modes-button-by-button) · [Auth](#auth-token) · [Hold OK](#hold-ok--context-menu) ·
+[Apps](#apps--4-editable-favourite-slots) · [Typing](#keyboard--voice-dictation-input) ·
+[Troubleshooting](#troubleshooting) · [What was measured](#verified-on-device) ·
+[Security](#security-note) · [Fire TV](#fire-tv) · [Limits](#not-supported-yet)
 
-On the projector this repo was built against, `persist.adb.tcp.port=5555` and
-`ro.debuggable=1` are set, so adb comes back on every boot even if the remote fails — that
-is the recovery path. A retail box without those props needs USB and `adb tcpip 5555` again
-after a reboot, which is worth knowing before you rely on it.
+## Using the remote
 
-## Quick start / update workflow
+Two tabs at the top, remembered per phone: **Keys** (D-pad, volume, media) and **Touchpad**
+(drag = move cursor, tap = click, two fingers = scroll). Below both: four app shortcuts
+(tap = launch, hold = change which app) and a keyboard bar.
+
+Add it to your phone's home screen and it opens fullscreen, like an app.
+
+## Everyday commands
 
 ```bash
-cp config.env config.local.env   # once: point TV_ADDR at your box
-./gen-cert.sh                    # once: local CA + leaf (no TLS material is committed)
-./deploy.sh                      # first install AND every future update
+./deploy.sh                  # install, and every future update
+./deploy.sh --rotate-token   # new secret (every phone must reopen the new link)
+./restart.sh                 # bounce the server without redeploying
+./logs.sh                    # what is it doing / why did it fail
+./uninstall.sh               # remove it completely
 ```
 
-### Trust the CA once, per phone
-
-The page is served over HTTPS, so the phone has to trust the local CA that `gen-cert.sh`
-made. On iOS this is two separate steps and **skipping the second is the usual cause of a
-"Not Secure" page** — installing the profile is not the same as trusting it.
-
-1. Safari → `http://<box-ip>:8443/ca.crt` → install the profile.
-   (This one URL is deliberately served over plaintext: the phone cannot validate our
-   certificate until it already has this file.)
-2. Settings → General → About → **Certificate Trust Settings** → toggle it **on**.
-3. Force-quit Safari — WebKit caches certificate failures.
-4. Open the tokenized URL from `./deploy.sh` → Share → **Add to Home Screen**, keeping
-   `?t=…` in the URL so the shortcut re-authorizes itself if iOS ever evicts the cookie.
-
-Renewing the leaf (`./gen-cert.sh && ./deploy.sh`) needs no re-trust while the CA is
-unchanged. Android/Chrome: install the same `ca.crt` via Settings → Security → Encryption
-& credentials → Install a certificate → CA certificate.
-
-After that:
-
-```bash
-./deploy.sh --rotate-token   # new secret (invalidates every phone's saved shortcut)
-./build.sh                   # just rebuild the proxy (runs its tests first)
-./restart.sh                 # just bounce the server
-./logs.sh                    # what's it doing / why did it fail
-./uninstall.sh               # remove completely
-```
-
-Edit → `./deploy.sh` → refresh the phone. The script **builds the proxy**, re-pushes, fixes
-perms/contexts, and restarts via `ctl.restart` (no reboot). It then asserts the security
-properties and refuses to report success unless all of them hold:
+`deploy.sh` rebuilds, re-copies, restarts, then asserts these and refuses to report success
+unless all hold:
 
 | check | want |
 |---|---|
@@ -143,42 +181,20 @@ properties and refuses to report success unless all of them hold:
 | `…/token` **with** the token | **404** — the secret can't be read back out |
 | listeners on `:8790` | **0** — no busybox survived from the old layout |
 
-`device/bin/tlsproxy` is **gitignored**, so a fresh clone has no binary at all —
-`deploy.sh` calling `build.sh` is what makes a clone deployable, and what stops an
-edit to `main.go` from silently shipping the previous binary. The TLS material is
-gitignored for the same reason in reverse: a committed CA would be a CA whose private
-key is in a public repo, so `gen-cert.sh` is a required first step, not an optional one.
+## Changing the settings
 
-## Point it at your device
+Everything lives in `config.local.env` (your gitignored copy of `config.env`):
 
-One file. Copy it and edit the copy:
+| Setting | What it does |
+|---|---|
+| `TV_ADDR` | Your box's address. Also accepts a plain adb serial like `emulator-5554` or a USB device serial — verification then goes through an `adb forward` tunnel automatically. |
+| `HTTPS_PORT` | Change if something else on the box already uses 8443. |
+| `REMOTE_DIR` | Where it installs on the box. |
+| `MDNS_HOST` | The `.local` name it advertises. |
 
-```bash
-cp config.env config.local.env
-```
-
-`config.local.env` is gitignored and overrides `config.env`, so your box's address never
-lands in a commit and `git pull` cannot clobber your settings. The only value you must
-change is the adb endpoint:
-
-```bash
-TV_ADDR=192.168.1.100:5555
-```
-
-`TV_ADDR` accepts either a network endpoint or a plain adb serial — `emulator-5554`, or a
-USB device's serial. A serial-attached box usually has no address your Mac can reach, so
-verification is done through an `adb forward` tunnel automatically.
-
-Then `./gen-cert.sh && ./deploy.sh`. The rest (`HTTPS_PORT`, `REMOTE_DIR`, `MDNS_HOST`)
-have working defaults.
-
-**Getting network adb up** is the one prerequisite this repo cannot do for you. If the box
-already has `persist.adb.tcp.port=5555` set, it is listening after every boot. Otherwise
-connect it over USB once and run `adb tcpip 5555`.
-
-**If the box's IP moves** — it is a DHCP lease — the leaf certificate's IP SAN no longer
-matches and the phone reports the certificate as invalid. Re-run `./gen-cert.sh &&
-./deploy.sh`. A DHCP reservation on your router avoids this entirely, and is worth doing.
+**If the box's IP changes** — it's usually a DHCP lease — the certificate no longer matches
+and your phone will complain. Re-run `./gen-cert.sh && ./deploy.sh`. Setting a fixed
+(reserved) IP on your router avoids this for good.
 
 ### Overrides you probably will not need
 
@@ -191,6 +207,18 @@ Input devices are found by **capability**, not by name: a pointer is whatever de
 `EV_REL` with `REL_X`/`REL_Y`, and a key device is whatever declares `EV_KEY` with
 `KEY_ENTER`. That is why no vendor-specific device name appears anywhere in the source.
 The proxy logs which nodes it bound on every start; if it guesses wrong, pin it.
+
+## Requirements, precisely
+
+- `adb` (`brew install android-platform-tools`) and **Go 1.25+** (to cross-compile the
+  server — `golang.org/x/crypto` requires it).
+- **On the box: nothing.** No busybox, no web server, no scripting runtime. The binary is
+  static and self-contained.
+
+On the projector this repo was built against, `persist.adb.tcp.port=5555` and
+`ro.debuggable=1` are set, so adb comes back on every boot even if the remote fails — that
+is the recovery path. A retail box without those props needs USB and `adb tcpip 5555` again
+after a reboot, which is worth knowing before you rely on it.
 
 ## Why this exists (root cause)
 
@@ -280,7 +308,7 @@ one is possible, is `/vendor/etc/init/tvremote.rc`.
 
 ---
 
-## Modes
+## Modes, button by button
 
 Two tabs at the top switch the controls (choice is saved per phone via `localStorage`):
 
@@ -520,8 +548,12 @@ Change the **port**: edit it in `device/boot.sh` (the source of truth — keep t
 
 ## Verified on device
 
-Deployed and measured against the projector on **2026-08-05**. What was found, including the
-things that were wrong:
+Measurements, in date order, including the things that turned out to be wrong. Nothing here
+is inferred — where a claim could not be measured, it says so.
+
+### The first deploy (2026-08-05)
+
+Measured against the projector. What was found, including the things that were wrong:
 
 **The vulnerability was live before the fix.** `curl http://192.168.220.53:8790/key.pem` returned the
 **TLS private key** to the whole WiFi, unauthenticated, and `netstat` showed `[::]:8790`. After the
@@ -567,6 +599,49 @@ change the socket is `127.0.0.1:8790` and `/key.pem` is a 404 even with a valid 
    step. Your phone already trusts this CA, so this only matters for a *new* phone.
 2. **iOS cookie persistence** in the standalone home-screen WebView across days/reboots — which is why
    the shortcut should be saved **with `?t=…`** in it.
+
+### A second box disproved a documented claim (2026-08-09)
+
+Tested on a Google Android TV emulator image — `user` build, SELinux **Enforcing**, arm64,
+`adb root` refused. It contradicted something this README had asserted one commit earlier.
+
+The claim was that root is not needed for the touchpad or hold-OK, because the `shell` user
+is in the `input` group. That was measured on the projector, which is **Permissive**, and it
+does not generalise. On Enforcing, policy denies the shell domain `/dev/input` *and*
+`/dev/uinput` regardless of group: `/proc/bus/input/devices` is not even readable, and
+`sendevent` fails. Keys, text and app launch are unaffected — those go through Android's
+`input` command and never touch evdev.
+
+- ✅ ABI selection, capability detection, non-root deploy and the config layer all worked
+  unmodified on hardware they had never seen.
+- ❌ Touchpad and hold-OK return 500 there. The server now reports this at `/caps`, and the
+  UI hides both rather than offering controls that cannot work.
+- ⚠️ Port `8443` was already occupied on that image, which also ships the real Android TV
+  Remote Service on `6466`/`6467`. `deploy.sh` now prints the box's own startup log on
+  failure instead of a wall of `000`.
+
+Full comparison in [Will it work on your box?](#will-it-work-on-your-box).
+
+### Launcher categories: querying one hides apps (2026-08-09)
+
+Found while adding Fire TV support, and it affected every Android TV box rather than only
+Amazon's. The app list queried `android.intent.category.LAUNCHER` only, but TV apps declare
+`LEANBACK_LAUNCHER`. **Neither category is a superset of the other** — measured on both
+boxes:
+
+| | Only in `LEANBACK_LAUNCHER` | Only in `LAUNCHER` |
+|---|---|---|
+| Google ATV emulator | **`com.android.tv.settings`** | `com.google.android.tv.remote.service` |
+| HiSilicon projector | *(none)* | `com.newlink.cast`, `com.newlink.filemanager`, `com.zhiying.bluetoothmodelservice` |
+
+So on the emulator **Settings was invisible in the picker and could not be launched by
+package**; querying leanback alone would instead have dropped three apps on the projector.
+Both are now queried and merged, leanback winning ties so the TV-flavoured activity is the
+one started.
+
+- ✅ **Emulator after the fix:** list grew 7 → 8, `a?pkg=com.android.tv.settings` → 200,
+  `a?set` → 200.
+- ✅ **Projector after the fix:** still 17 packages, all three `LAUNCHER`-only ones present.
 
 ## Security note
 
