@@ -261,8 +261,8 @@ echo
 echo "REMOTE URL (contains the token — treat it like a password):"
 echo "  https://$IP:$HTTPS/?t=$tok"
 echo
-echo "iPhone (one-time): DELETE any old 'Projector Remote' profile first, then:"
-echo "  1) Safari -> http://$IP:$HTTPS/ca.crt  -> install the 'Projector Remote Local CA' profile"
+echo "iPhone (one-time) — install the CA profile, then TRUST it (two separate steps):"
+echo "  1) Safari -> http://$IP:$HTTPS/ca.crt  -> install the CA profile"
 echo "  2) Settings > General > About > Certificate Trust Settings -> turn it ON"
 echo "  3) force-quit Safari, then open the tokenized URL above -> Add to Home Screen"
 echo "     (add it WITH ?t=… so the shortcut re-authorizes itself if the cookie is ever evicted)"

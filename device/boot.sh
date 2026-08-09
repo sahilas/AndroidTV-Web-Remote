@@ -18,7 +18,7 @@ B="${0%/*}"
 # if this runs before a deploy has finished.
 HTTPS_PORT=8443
 REMOTE_DIR="$B"
-MDNS_HOST=projectorremote
+MDNS_HOST=androidtvremote
 ADV_IP=
 [ -f "$B/config" ] && . "$B/config"
 B="$REMOTE_DIR"

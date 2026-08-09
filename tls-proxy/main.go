@@ -55,7 +55,7 @@ var (
 	listen   = ":8443"
 	dir      = "/data/local/tmp/tvremote"
 	advIP    = "" // advertised over mDNS; empty = autodetect this host's LAN IP
-	mdnsHost = "projectorremote"
+	mdnsHost = "androidtvremote"
 )
 
 const cookie = "tvr"

@@ -68,12 +68,11 @@ the actual Android TV Remote Service on `6466`/`6467`. If `deploy.sh` reports
 ## Contents
 
 - [Requirements](#requirements-on-the-mac) · [Quick start](#quick-start--update-workflow) · [Point it at your device](#point-it-at-your-device)
-- [HTTPS + fullscreen home-screen app](#https--fullscreen-home-screen-app) — cert trust, the iPhone one-time steps
 - [Why this exists](#why-this-exists-root-cause) — why the Google TV remote app can never work here
 - [Architecture](#architecture) · [Files](#files)
 - [Modes](#modes) · [Auth](#auth-token) · [Hold OK](#hold-ok--context-menu) · [Apps](#apps--4-editable-favourite-slots) · [Keyboard & voice](#keyboard--voice-dictation-input)
 - [Add or change buttons](#add-or-change-buttons) · [Troubleshooting](#troubleshooting)
-- [Verified on device](#verified-on-device) · [Security note](#security-note) · [Device facts](#device-facts-for-future-edits)
+- [Verified on device](#verified-on-device) · [Security note](#security-note) · [Not supported yet](#not-supported-yet) · [Device facts](#device-facts-for-future-edits)
 
 ## Requirements (on the Mac)
 
@@ -97,8 +96,25 @@ cp config.env config.local.env   # once: point TV_ADDR at your box
 ./deploy.sh                      # first install AND every future update
 ```
 
-Then trust the CA on the phone once — see
-[HTTPS + fullscreen home-screen app](#https--fullscreen-home-screen-app). After that:
+### Trust the CA once, per phone
+
+The page is served over HTTPS, so the phone has to trust the local CA that `gen-cert.sh`
+made. On iOS this is two separate steps and **skipping the second is the usual cause of a
+"Not Secure" page** — installing the profile is not the same as trusting it.
+
+1. Safari → `http://<box-ip>:8443/ca.crt` → install the profile.
+   (This one URL is deliberately served over plaintext: the phone cannot validate our
+   certificate until it already has this file.)
+2. Settings → General → About → **Certificate Trust Settings** → toggle it **on**.
+3. Force-quit Safari — WebKit caches certificate failures.
+4. Open the tokenized URL from `./deploy.sh` → Share → **Add to Home Screen**, keeping
+   `?t=…` in the URL so the shortcut re-authorizes itself if iOS ever evicts the cookie.
+
+Renewing the leaf (`./gen-cert.sh && ./deploy.sh`) needs no re-trust while the CA is
+unchanged. Android/Chrome: install the same `ca.crt` via Settings → Security → Encryption
+& credentials → Install a certificate → CA certificate.
+
+After that:
 
 ```bash
 ./deploy.sh --rotate-token   # new secret (invalidates every phone's saved shortcut)
@@ -171,54 +187,6 @@ Input devices are found by **capability**, not by name: a pointer is whatever de
 `EV_REL` with `REL_X`/`REL_Y`, and a key device is whatever declares `EV_KEY` with
 `KEY_ENTER`. That is why no vendor-specific device name appears anywhere in the source.
 The proxy logs which nodes it bound on every start; if it guesses wrong, pin it.
-
-## HTTPS + fullscreen home-screen app
-
-The page **is** `apple-mobile-web-app-capable`, so "Add to Home Screen" launches a fullscreen
-standalone app. That standalone WebView refuses plain HTTP (ATS / "HTTPS-only"), so we serve
-HTTPS: a tiny Go **TLS reverse proxy** (`tls-proxy/main.go`, static armv7 binary at
-`device/bin/tlsproxy`) listens on **:8443** and forwards to the busybox httpd on `127.0.0.1:8790`.
-
-The proxy also **301-redirects plaintext HTTP that lands on :8443 to https://** (it peeks the
-first byte — `0x16` = TLS handshake — and redirects anything else), so hitting `http://…:8443`
-by mistake self-corrects instead of showing "Client sent an HTTP request to an HTTPS server".
-
-**One deliberate exception:** `/ca.crt` **is** served over that plaintext path, ungated. It has to
-be — the phone cannot validate our certificate until it has already installed this file, so gating
-or TLS-only-ing it would make a fresh phone unable to bootstrap trust at all. It's a public
-certificate, so serving it in the clear costs nothing. This exception is what lets the busybox
-backend stay bound to loopback.
-
-TLS material (`gen-cert.sh`) is a **local CA + short-lived leaf**, not a bare self-signed cert —
-iOS rejects a self-signed cert that is `CA:TRUE` used as a server leaf. So:
-- **CA** (`ca.pem`, CN "Projector Remote Local CA", `CA:TRUE`, `keyCertSign`) — installed + trusted on the phone.
-- **leaf** (`CA:FALSE`, `serverAuth`, SAN `IP:192.168.220.53`, 397 days) signed by the CA.
-- Proxy serves the **fullchain** (`cert.pem` = leaf then CA). Verified against Apple's own
-  evaluator: `security verify-cert -c leaf.pem -r ca.pem -p ssl -s 192.168.220.53` → success, so
-  Apple's SSL policy accepts the IP SAN (no hostname needed).
-
-**iPhone one-time trust (required — "Not Secure" = this wasn't completed):**
-1. **Delete any old "Projector Remote" profile** (Settings → General → VPN & Device Management).
-2. Safari → `http://192.168.220.53:8443/ca.crt` → tap through → install the **"Projector Remote Local CA"** profile.
-   (Note the port: **8443**, not 8790 — the backend is loopback-only now.)
-3. Settings → General → About → **Certificate Trust Settings** → toggle it **ON** (mandatory; the
-   app silently fails as "Not Secure" without it).
-4. **Force-quit Safari** (WebKit caches cert failures), then open the **tokenized URL** printed by
-   `./deploy.sh` → Share → **Add to Home Screen**. Fullscreen + Secure.
-   **Add it with `?t=…` still in the URL** — then if iOS ever evicts the cookie, launching the
-   shortcut silently re-authorizes instead of showing "not authorized".
-
-Leaf renewal (`./gen-cert.sh && ./deploy.sh`) needs **no** re-trust as long as the CA is unchanged.
-
-**The one that actually mattered:** the "Not Secure" symptom was the **Certificate Trust Settings
-toggle not being on** (Settings → General → About). With the CA trusted, the IP-SAN cert works fine
-in iOS Safari — the earlier "iOS refuses IP certs" guess was wrong. The mDNS hostname
-(`projectorremote.local`, via `grandcat/zeroconf`) is kept as a fallback for networks that pass
-mDNS, but this WiFi blocks client-to-client mDNS, so the IP is the URL to use.
-- **Runs on:** the projector (busybox `httpd` + a CGI that injects key events as root)
-- **Boot-persistent:** yes — an Android `init` service starts and supervises it
-
----
 
 ## Why this exists (root cause)
 
@@ -609,6 +577,26 @@ Closing that means firewalling 5555 or dropping the prop — and the props are a
 recovery path if the remote wedges, so it's a deliberate trade, not an oversight.
 
 Also note SELinux on this box is **Permissive**, so the `u:r:su:s0` service isn't confined.
+
+## Not supported yet
+
+**Fire TV / Fire OS.** Planned, not done. Amazon's boxes are the largest population this
+should serve and are exactly the case it was built for — no Google remote service — but
+nothing here has been run against one, so there is no claim to make. Two things are known to
+differ and would need checking first: Fire OS ships its own launcher and package set, so the
+app list and the Settings intent (`android.settings.SETTINGS`) may resolve differently; and
+network adb is enabled through Developer Options rather than a preset property, so the
+recovery path is not the same. Everything else — ABI selection, capability detection, the
+non-root deploy — is device-agnostic and should apply unchanged.
+
+**A real retail set-top.** Both boxes tested so far are a dev-build projector and an
+emulator. The emulator is the right *profile* (`user` build, Enforcing, `adb root` refused)
+but its input devices are virtual, so a physical box's node layout is still unverified.
+
+**Air-mouse and hold-OK on a locked box.** Not a gap that can be closed in this design —
+both evdev routes (`/dev/input` and `/dev/uinput`) are denied to the shell domain under
+SELinux Enforcing. It would take a companion APK with an AccessibilityService, which is a
+much larger project than this one.
 
 ## Device facts (for future edits)
 

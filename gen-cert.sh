@@ -10,7 +10,7 @@ D="$HERE/device"
 # --- CA (this is what the iPhone downloads + trusts) ---
 if [ ! -f "$D/ca.pem" ]; then
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$D/ca.key" -out "$D/ca.pem" -days 3650 \
-    -subj "/CN=Projector Remote Local CA" \
+    -subj "/CN=Android TV Remote Local CA" \
     -addext "basicConstraints=critical,CA:TRUE" \
     -addext "keyUsage=critical,keyCertSign,cRLSign"
   echo "generated new CA (device/ca.pem)"
