@@ -529,6 +529,13 @@ func routes() *http.ServeMux {
 		typeText(w, r.URL.RawQuery)
 	}))
 	mux.Handle("/cgi-bin/a", apps()) // list, launch-by-package, settings
+	// What this box can actually do. The UI reads it to hide controls that
+	// cannot work here, instead of offering a Touchpad tab that 500s on every
+	// drag -- which is what a locked box would otherwise present.
+	mux.HandleFunc("/caps", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(probeCaps())
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/", "/index.html":
@@ -702,6 +709,8 @@ func main() {
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
 	})
+	c := probeCaps()
+	log.Printf("caps: keys=%v pointer=%v heldKey=%v %s", c.Keys, c.Pointer, c.HeldKey, c.Detail)
 	log.Printf("HTTPS %s (self-contained: token gate, embedded UI, native input)", listen)
 	log.Fatal(srv.Serve(tlsLn))
 }

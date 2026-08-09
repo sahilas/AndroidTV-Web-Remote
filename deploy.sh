@@ -29,7 +29,14 @@ SELINUX="$(probe getenforce)"
 BUILDTYPE="$(probe 'getprop ro.build.type')"
 if [ "$ROOT" = 1 ] && adb -s "$TV" remount >/dev/null 2>&1; then VENDOR_RW=1; else VENDOR_RW=0; fi
 
+# On a serial-attached device (emulator/USB) the box has no address the Mac can
+# reach, so derive its own IP for the cert SAN and verify through a forward.
+[ -z "$IP" ] && IP="$(device_ip)"
+[ -z "$IP" ] && IP=127.0.0.1
+setup_reach || exit 1
+
 echo "   ABI          $BIN"
+echo "   adb target   $TV $([ "$NETWORK_ADB" = 1 ] && echo '(network)' || echo '(serial, verifying via adb forward)')"
 echo "   build        ${BUILDTYPE:-unknown}"
 echo "   adb root     $([ "$ROOT" = 1 ] && echo yes || echo 'no (shell uid)')"
 echo "   /vendor rw   $([ "$VENDOR_RW" = 1 ] && echo yes || echo no)"
@@ -156,21 +163,21 @@ sleep 3
 # set -e would treat as fatal; swallow the status and keep the code.
 code(){ local c; c=$(curl -sk -m6 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null) || c=000; echo "${c:-000}"; }
 
-noauth=$(code "https://$IP:$HTTPS/")                 # must be 401
-auth=$(code -H "Cookie: tvr=$tok" "https://$IP:$HTTPS/")
-ca=$(code "http://$IP:$HTTPS/ca.crt")                # plaintext bootstrap, must be 200
+noauth=$(code "https://$REACH_HOST:$REACH_PORT/")                 # must be 401
+auth=$(code -H "Cookie: tvr=$tok" "https://$REACH_HOST:$REACH_PORT/")
+ca=$(code "http://$REACH_HOST:$REACH_PORT/ca.crt")                # plaintext bootstrap, must be 200
 # Proves input injection really runs, not just that the server answers. Paired
 # up/down so the check leaves the volume where it found it.
-key=$(code -H "Cookie: tvr=$tok" "https://$IP:$HTTPS/cgi-bin/k?volup")
-code -H "Cookie: tvr=$tok" "https://$IP:$HTTPS/cgi-bin/k?voldown" >/dev/null
+key=$(code -H "Cookie: tvr=$tok" "https://$REACH_HOST:$REACH_PORT/cgi-bin/k?volup")
+code -H "Cookie: tvr=$tok" "https://$REACH_HOST:$REACH_PORT/cgi-bin/k?voldown" >/dev/null
 # Nothing is served off the filesystem now, but assert it anyway: this pair is
 # what caught the TLS private key being downloadable over the LAN, and a future
 # static-file handler would silently reintroduce it.
-leakkey=$(code -H "Cookie: tvr=$tok" "https://$IP:$HTTPS/key.pem")
-leaktok=$(code -H "Cookie: tvr=$tok" "https://$IP:$HTTPS/token")
+leakkey=$(code -H "Cookie: tvr=$tok" "https://$REACH_HOST:$REACH_PORT/key.pem")
+leaktok=$(code -H "Cookie: tvr=$tok" "https://$REACH_HOST:$REACH_PORT/token")
 # The UI must actually come back. A 200 alone would also be satisfied by an
 # empty body if the embed ever broke.
-ui=$(curl -sk -m6 -H "Cookie: tvr=$tok" "https://$IP:$HTTPS/" 2>/dev/null | grep -c '<html' || true)
+ui=$(curl -sk -m6 -H "Cookie: tvr=$tok" "https://$REACH_HOST:$REACH_PORT/" 2>/dev/null | grep -c '<html' || true)
 # Upgrade hazard, not a permanent one: a box deployed under the old layout has a
 # busybox httpd that init does not supervise, so it survives ctl.restart and
 # keeps serving the whole install dir as root on the LAN. Assert it is gone.
@@ -178,10 +185,10 @@ ui=$(curl -sk -m6 -H "Cookie: tvr=$tok" "https://$IP:$HTTPS/" 2>/dev/null | grep
 # shell -- putting it outside appends a second value to the one grep printed.
 stray=$(adb -s "$TV" shell "toybox netstat -ltn 2>/dev/null | grep -c ':$LEGACY_BACKEND_PORT ' || true" | tr -d '\r' | head -1)
 
-echo "   no token           https://$IP:$HTTPS/          -> $noauth   (want 401)"
-echo "   with token         https://$IP:$HTTPS/          -> $auth   (want 200)"
+echo "   no token           https://$REACH_HOST:$REACH_PORT/          -> $noauth   (want 401)"
+echo "   with token         https://$REACH_HOST:$REACH_PORT/          -> $auth   (want 200)"
 echo "   UI body served     <html> in response           -> $ui   (want 1)"
-echo "   CA over plaintext  http://$IP:$HTTPS/ca.crt     -> $ca   (want 200)"
+echo "   CA over plaintext  http://$REACH_HOST:$REACH_PORT/ca.crt     -> $ca   (want 200)"
 echo "   a key press        …/cgi-bin/k?volup            -> $key   (want 200)"
 echo "   TLS key w/ token   …/key.pem                    -> $leakkey   (want 404)"
 echo "   token w/ token     …/token                      -> $leaktok   (want 404)"
@@ -196,9 +203,53 @@ fail=0
 [ "$leakkey" = 404 ] || { echo "!! the TLS PRIVATE KEY is downloadable"; fail=1; }
 [ "$leaktok" = 404 ] || { echo "!! the auth token itself is downloadable"; fail=1; }
 [ "$stray"   = 0   ] || { echo "!! a stale busybox httpd is still serving the install dir on :$LEGACY_BACKEND_PORT"; fail=1; }
-if [ "$fail" != 0 ]; then echo "FAILED (see: ./logs.sh)"; exit 1; fi
+if [ "$fail" != 0 ]; then
+  # The server's own startup error is the single most useful thing here and it
+  # is already on the device. Without this every startup failure -- port taken,
+  # bad cert, missing token -- looks identical from the Mac: a wall of 000.
+  echo
+  echo "--- $REMOTE/boot.log (on the device) ---"
+  adb -s "$TV" shell "tail -20 $REMOTE/boot.log 2>/dev/null" | sed 's/^/   /' || true
+  case "$(adb -s "$TV" shell "tail -5 $REMOTE/boot.log 2>/dev/null" | tr -d '\r')" in
+    *"address already in use"*)
+      echo
+      echo "   Port $HTTPS is taken by something else on this box. Set a different"
+      echo "   HTTPS_PORT in config.local.env and re-run. (Some Android TV builds"
+      echo "   ship services on 8443/6466/6467/8008.)" ;;
+  esac
+  echo
+  echo "FAILED (see also: ./logs.sh)"
+  exit 1
+fi
 
 echo "OK."
+
+# What this box can actually do. Reported after the deploy succeeds because it
+# is answered by the running server, not guessed from properties -- evdev access
+# depends on SELinux policy, which uid and group membership do not reveal.
+caps=$(curl -sk -m6 -H "Cookie: tvr=$tok" "https://$REACH_HOST:$REACH_PORT/caps" 2>/dev/null || true)
+case "$caps" in
+  *'"pointer":true'*) ptr="yes" ;;
+  *'"pointer":false'*) ptr="NO" ;;
+  *) ptr="?" ;;
+esac
+case "$caps" in
+  *'"heldKey":true'*) hold="yes" ;;
+  *'"heldKey":false'*) hold="NO" ;;
+  *) hold="?" ;;
+esac
+echo
+echo "Features on this box:"
+echo "   keys / text / apps    yes"
+echo "   touchpad (air-mouse)  $ptr"
+echo "   hold-OK context menu  $hold"
+if [ "$ptr" = "NO" ] || [ "$hold" = "NO" ]; then
+  echo
+  echo "   evdev is not writable here. That is expected on an SELinux-Enforcing"
+  echo "   box without root: policy denies /dev/input and /dev/uinput to the shell"
+  echo "   domain regardless of the 'input' group. The remote still works — the"
+  echo "   touchpad and the held-OK gesture are the only things unavailable."
+fi
 if [ "$PERSIST" != 1 ]; then
   echo
   echo "NOTE: no boot persistence on this box — /vendor is not writable, and init"

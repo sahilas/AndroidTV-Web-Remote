@@ -19,34 +19,51 @@ possible.
   (air-mouse: drag = move cursor, tap = click, 2-finger = scroll). A 4-slot app row
   (tap = launch, hold = change app) and a keyboard bar are shared by both.
 
-> **Tested on one box.** Everything here is verified on a HiSilicon Hi3751V350 running
-> Android 12 (Zeasn Whale OS). The portability work is deliberate and the device-specific
-> assumptions have been removed, but until someone runs this on a second box, "works on any
-> Android TV" is a design intent, not a measurement. Where a claim is untested, this README
-> says so. `192.168.220.53` throughout is that box's DHCP address, used as a concrete example.
+> **Tested on two boxes**, deliberately unalike: a HiSilicon Hi3751V350 projector
+> (Android 12, `userdebug`, SELinux Permissive, armv7) and a Google Android TV emulator
+> image (Android 12, `user`, SELinux **Enforcing**, arm64, `adb root` refused). Between them
+> they cover both ABIs, both SELinux modes, and both the rooted and locked cases. See
+> [Will it work on your box?](#will-it-work-on-your-box) for what that measured.
+> `192.168.220.53` throughout is the projector's DHCP address, used as a concrete example.
 
 ## Will it work on your box?
 
-`./deploy.sh` probes and prints a tier before changing anything. Two things decide it:
+`./deploy.sh` probes before changing anything, and after a successful deploy asks the
+running server what it can actually drive. You get a feature list, not a promise.
 
-| | Needs | If absent |
+| Feature | Needs | Retail box (Enforcing, no root) |
 |---|---|---|
-| **Everything** — D-pad, media, volume, text, app launch, **air-mouse, held-OK** | network `adb`, and the `shell` user in the `input` group (standard on AOSP) | nothing works; the box is not reachable |
-| **Boot persistence** | `adb root` **and** a writable `/vendor` — i.e. a `userdebug` build | remote works fully, but must be relaunched over adb after a reboot |
+| D-pad, media, volume, **text**, **app launch**, absolute tap | network `adb` — nothing else | ✅ works |
+| **Touchpad / air-mouse** | writable `/dev/input` | ❌ unavailable |
+| **Hold-OK → context menu** | writable `/dev/input` | ❌ falls back to a normal OK |
+| **Boot persistence** | `adb root` + writable `/vendor` | ❌ relaunch over adb after reboot |
 
-The surprising part, and the reason this is worth using on a locked box: **root is not
-required for the air-mouse or the real held-OK press.** Both write to `/dev/input` directly,
-and the `shell` user can do that because it is in the `input` group — the same reason
-`sendevent` works from `adb shell` on a stock device. Measured on the projector by deploying
-as uid 2000: all features work, both evdev nodes open.
+**SELinux is what decides the two evdev features, and it is stricter than file permissions
+suggest.** The `shell` user is in the `input` group on both boxes tested, and on a
+**Permissive** build that is enough — everything works as uid 2000, no root. But on an
+**Enforcing** build, policy denies the shell domain `/dev/input` *and* `/dev/uinput`
+regardless of group, so `sendevent` and any direct evdev write fail. Keys, text and app
+launch are unaffected because those go through Android's `input` command, which never
+touches evdev.
 
-Only boot persistence needs root, because `init` reads service definitions from a partition
-a locked box will not let you write.
+Measured, not inferred:
 
-**Untested:** every box in this table is inferred from one that is SELinux **Permissive**.
-On an **Enforcing** box, policy — not group membership — decides `/dev/input` access, and
-that could take the air-mouse and held-OK away while leaving keys and text working. If you
-run this on an Enforcing box, that is the thing to report.
+| | HiSilicon Hi3751V350 | Google ATV emulator |
+|---|---|---|
+| build / SELinux | `userdebug`, Permissive | `user`, **Enforcing** |
+| ABI | armeabi-v7a | arm64-v8a |
+| `adb root` | yes | refused — *"adbd cannot run as root in production builds"* |
+| keys / text / apps | ✅ | ✅ |
+| air-mouse, hold-OK | ✅ (even as uid 2000) | ❌ `/proc/bus/input/devices`: permission denied |
+| boot persistence | ✅ | ❌ |
+
+The UI adapts on its own: it fetches `/caps` on load, hides the Touchpad tab where the
+pointer is unavailable, and turns hold-OK into a plain OK rather than showing an error on a
+gesture you had no way to know was unsupported.
+
+**Port conflicts are real.** The Google ATV image already had something on `8443`, and ships
+the actual Android TV Remote Service on `6466`/`6467`. If `deploy.sh` reports
+`address already in use`, set a different `HTTPS_PORT` in `config.local.env`.
 
 ## Contents
 
@@ -127,6 +144,10 @@ change is the adb endpoint:
 ```bash
 TV_ADDR=192.168.1.100:5555
 ```
+
+`TV_ADDR` accepts either a network endpoint or a plain adb serial — `emulator-5554`, or a
+USB device's serial. A serial-attached box usually has no address your Mac can reach, so
+verification is done through an `adb forward` tunnel automatically.
 
 Then `./gen-cert.sh && ./deploy.sh`. The rest (`HTTPS_PORT`, `REMOTE_DIR`, `MDNS_HOST`)
 have working defaults.

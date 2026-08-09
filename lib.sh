@@ -13,16 +13,49 @@ _LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 HERE="$_LIBDIR"
 TV="$TV_ADDR"
-IP="${TV%:*}"          # adb endpoint minus the port
 HTTPS="$HTTPS_PORT"
 # Only used to assert the pre-embed busybox backend is gone; see deploy.sh.
 LEGACY_BACKEND_PORT=8790
 REMOTE="$REMOTE_DIR"
 
-if [ -z "$IP" ] || [ "$IP" = "$TV" ]; then
-  echo "!! TV_ADDR must be host:port (got '$TV') — see config.env" >&2
+# TV_ADDR is either a network endpoint (192.168.1.100:5555) or a plain adb
+# serial (emulator-5554, or a USB device's serial). Both are legitimate targets,
+# and they differ in one way that matters: a serial-attached device usually has
+# no LAN address the Mac can reach, so verification has to go through an
+# `adb forward` tunnel instead of straight at the box.
+case "$TV" in
+  *:*) NETWORK_ADB=1; IP="${TV%:*}" ;;
+  *)   NETWORK_ADB=0; IP="" ;;
+esac
+
+if [ "$NETWORK_ADB" = 1 ] && { [ -z "$IP" ] || [ "$IP" = "$TV" ]; }; then
+  echo "!! TV_ADDR looks like host:port but the host is empty (got '$TV') — see config.env" >&2
   exit 1
 fi
+
+# device_ip reports the box's own primary IPv4, used for the certificate SAN and
+# the mDNS advertisement. On an emulator this is a NAT address (10.0.2.15) that
+# nothing outside can reach -- which is why serial mode verifies over a forward.
+device_ip() {
+  adb -s "$TV" shell "ip -4 route get 1 2>/dev/null" 2>/dev/null \
+    | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1 | tr -d '\r'
+}
+
+# base_url is where the Mac should talk to the remote. Direct over the LAN when
+# the box has a reachable address; otherwise set up a port forward and use it.
+# FORWARD_PORT is picked to not collide with the real one when both a projector
+# and an emulator are attached at once.
+FORWARD_PORT="${FORWARD_PORT:-18443}"
+setup_reach() {
+  if [ "$NETWORK_ADB" = 1 ]; then
+    REACH_HOST="$IP"; REACH_PORT="$HTTPS"
+  else
+    adb -s "$TV" forward --remove "tcp:$FORWARD_PORT" >/dev/null 2>&1 || true
+    adb -s "$TV" forward "tcp:$FORWARD_PORT" "tcp:$HTTPS" >/dev/null 2>&1 \
+      || { echo "!! adb forward failed; cannot reach the device's $HTTPS" >&2; return 1; }
+    REACH_HOST=127.0.0.1; REACH_PORT="$FORWARD_PORT"
+  fi
+}
 
 # adb connect + become root where possible. Returns 0 if the shell is root, 1 if
 # it is the unprivileged `shell` user. Callers decide whether that is fatal:

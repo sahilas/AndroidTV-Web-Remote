@@ -138,6 +138,53 @@ func pickNode(devs []inputDev, preferName string, want func(inputDev) bool) (inp
 	return inputDev{}, fmt.Errorf("no suitable input device among %d candidates", len(devs))
 }
 
+// caps is what this box can actually do, resolved by trying rather than by
+// assuming. Both evdev features depend on writing /dev/input, and whether that
+// is allowed is not knowable from uid or group membership alone:
+//
+// On a Permissive box the `input` group is enough and everything works as the
+// shell user. On an Enforcing box -- which is what a retail Android TV is --
+// SELinux policy denies the shell domain both /dev/input and /dev/uinput, so
+// the air-mouse and the real held-key press are impossible without root, while
+// keys and text keep working because those go through Android's `input`
+// command and never touch evdev. Measured on a Google ATV emulator image.
+type caps struct {
+	Pointer bool   `json:"pointer"` // air-mouse: relative motion, click, wheel
+	HeldKey bool   `json:"heldKey"` // hold-OK -> app context menu
+	Keys    bool   `json:"keys"`    // always true if we are serving at all
+	Detail  string `json:"detail"`  // why, when something is unavailable
+}
+
+// probeCaps opens each evdev role once. Cheap, and the fd is kept for later use.
+func probeCaps() caps {
+	c := caps{Keys: true}
+	var why []string
+	if _, err := mo.fd(); err != nil {
+		why = append(why, "pointer: "+firstLine(err.Error()))
+	} else {
+		c.Pointer = true
+	}
+	if _, err := kb.fd(); err != nil {
+		why = append(why, "held-key: "+firstLine(err.Error()))
+	} else {
+		c.HeldKey = true
+	}
+	if len(why) > 0 {
+		c.Detail = strings.Join(why, "; ") +
+			" -- evdev is unavailable, which is expected on an SELinux-Enforcing box without root." +
+			" Keys, text and app launch are unaffected."
+	}
+	return c
+}
+
+// firstLine keeps the device dump out of a one-line JSON field.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
 // describe renders the discovered devices for the log. Worth printing on every
 // start: when the pointer lands on the wrong node, this is the only thing that
 // makes it diagnosable without a shell on the box.

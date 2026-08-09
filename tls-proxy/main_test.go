@@ -153,7 +153,7 @@ func TestEmbeddedUIIsPresent(t *testing.T) {
 	if len(indexHTML) < 1000 {
 		t.Fatalf("embedded index.html is %d bytes, expected the real page", len(indexHTML))
 	}
-	for _, want := range []string{"cgi-bin/k?", "cgi-bin/m?rel=", "cgi-bin/a?list"} {
+	for _, want := range []string{"cgi-bin/k?", "cgi-bin/m?rel=", "cgi-bin/a?list", "/caps"} {
 		if !bytes.Contains(indexHTML, []byte(want)) {
 			t.Errorf("embedded page does not reference %q -- UI and server are out of sync", want)
 		}

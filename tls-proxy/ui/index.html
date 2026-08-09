@@ -269,9 +269,29 @@ function bindSlot(b,i){
 /* OK: tap = DPAD_CENTER, hold = HELD DPAD_CENTER, which is how Android apps are
    told to open a context menu. Both OK buttons (Keys d-pad and Touchpad row) get
    it — they're the same key, so they shouldn't behave differently. */
+var CAPS={pointer:true,heldKey:true};   // assumed until /caps says otherwise
 [].forEach.call(document.querySelectorAll('.okbtn'),function(b){
- bindHold(b,function(){k('ok');},function(){flash('held OK sent');k('long_ok');});
+ bindHold(b,function(){k('ok');},function(){
+  /* A box without evdev cannot produce a real held key. Sending long_ok there
+     just 500s, so fall back to a normal OK: a plain select is a far better
+     outcome than an error toast on a gesture the user cannot know is
+     unsupported. */
+  if(!CAPS.heldKey){k('ok');return;}
+  flash('held OK sent');k('long_ok');
+ });
 });
+
+/* Ask the box what it can actually drive, and hide what it cannot. Without
+   this, a locked (SELinux Enforcing, no root) box shows a Touchpad tab where
+   every drag fails — the feature looks broken rather than unavailable. */
+fetch('/caps').then(function(r){return r.json();}).then(function(c){
+ CAPS=c;
+ if(!c.pointer){
+  var t=document.getElementById('tabPad');
+  if(t)t.style.display='none';
+  mode('keys');
+ }
+}).catch(function(){});
 
 var pickSlot=0;
 function openPicker(i){
