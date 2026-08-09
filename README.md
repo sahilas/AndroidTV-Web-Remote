@@ -702,18 +702,20 @@ it does not inject input events (`INJECT_EVENTS` is signature-level). `dispatchG
 delivers absolute touch strokes, not a cursor, and a leanback UI consumes D-pad focus rather
 than touch. The pointer is a rooted-or-Permissive-box feature.
 
-**Hold-OK on a locked box.** Partly recoverable, not fully. A companion
-AccessibilityService can call `ACTION_LONG_CLICK` on the focused node — but that acts
-*above* the app, so it only exists where the focused view exposes it. The evdev hold it
-would replace acts *below* the app and is therefore universal. Expect it to work in
-launchers and list UIs and to do nothing in SurfaceView players, which is where the original
-was most useful.
+**Hold-OK on a locked box.** Measured, and **not recoverable** either. A companion
+AccessibilityService can call `ACTION_LONG_CLICK`, but that acts *above* the app and only
+exists where the focused view exposes it — and on Android TV, essentially nothing does. No
+long-clickable node was found on the TV launcher, on Settings, or in YouTube TV. TV UIs are
+D-pad driven and handle long-press through their own key handling, so the interaction was
+never modelled as a click. The evdev hold it would replace acts *below* the app, which is
+why that one works everywhere.
 
-**Boot persistence on a locked box.** This one a companion app genuinely does fix: the
-system starts an enabled AccessibilityService on every boot, with no writable `/vendor`
-needed. Scaffolded and measured — service builds, installs, binds, and can be enabled
-entirely over adb: **[AndroidTV-Remote-Assist](https://github.com/sahilas/AndroidTV-Remote-Assist)**
-(private while it is a skeleton).
+**Boot persistence on a locked box.** This one a companion app genuinely does fix, and it is
+now the *only* reason for one to exist: the system starts an enabled AccessibilityService on
+every boot, with no writable `/vendor` needed. It can also host this repo's Go binary
+directly — measured, an app can exec it from `nativeLibraryDir` — so nothing here would need
+reimplementing. Scaffold, measurements and design:
+**[AndroidTV-Remote-Assist](https://github.com/sahilas/AndroidTV-Remote-Assist)**.
 
 ## Device facts (for future edits)
 
