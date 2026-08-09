@@ -181,56 +181,38 @@ func ev(typ, code uint16, value int32) []byte {
 	return b
 }
 
-// findNode resolves an input device by NAME rather than by a fixed event
-// number, which changes across reboots.
-func findNode(name string) (string, error) {
-	b, err := os.ReadFile("/proc/bus/input/devices")
-	if err != nil {
-		return "", err
-	}
-	return parseDevices(string(b), name)
-}
-
-// parseDevices pulls one device's event node out of /proc/bus/input/devices.
-func parseDevices(s, name string) (string, error) {
-	match := false
-	for _, ln := range strings.Split(s, "\n") {
-		ln = strings.TrimSpace(ln)
-		switch {
-		case strings.HasPrefix(ln, "N: "):
-			match = strings.Contains(ln, `Name="`+name+`"`)
-		case match && strings.HasPrefix(ln, "H: "):
-			for _, f := range strings.Fields(ln) {
-				f = strings.TrimPrefix(f, "Handlers=")
-				if strings.HasPrefix(f, "event") {
-					return "/dev/input/" + f, nil
-				}
-			}
-		}
-	}
-	return "", fmt.Errorf("no %q node in /proc/bus/input/devices", name)
-}
-
 // evdev owns one long-lived write fd on an input node.
+//
+// role is what this device is for ("pointer"/"keys"); prefer is an optional
+// exact device name that overrides capability detection. The node is resolved
+// lazily and re-resolved after a write error, so a device that renumbers or
+// re-enumerates recovers without a restart.
 type evdev struct {
-	name string
-	mu   sync.Mutex
-	f    *os.File
+	role   string
+	prefer string
+	want   func(inputDev) bool
+	mu     sync.Mutex
+	f      *os.File
 }
 
 func (d *evdev) fd() (*os.File, error) {
 	if d.f != nil {
 		return d.f, nil
 	}
-	p, err := findNode(d.name)
+	b, err := os.ReadFile("/proc/bus/input/devices")
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(p, os.O_WRONLY, 0)
+	devs := parseInputDevices(string(b))
+	dev, err := pickNode(devs, d.prefer, d.want)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w (available:%s)", d.role, err, describe(devs))
+	}
+	f, err := os.OpenFile(dev.node, os.O_WRONLY, 0)
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("evdev: %s (%s) open", p, d.name)
+	log.Printf("evdev: %s -> %s (%q)", d.role, dev.node, dev.name)
 	d.f = f
 	return f, nil
 }
@@ -261,9 +243,11 @@ func (d *evdev) emit(evs ...[]byte) error {
 	return last
 }
 
+// Discovered by capability, not by name -- see discover.go. -pointer-name and
+// -key-name pin them by exact name if a box needs it.
 var (
-	mo = &evdev{name: "Hi mouse"}    // pointer
-	kb = &evdev{name: "Hi keyboard"} // remote keys (the IR receiver's node)
+	mo = &evdev{role: "pointer", want: inputDev.isPointer}
+	kb = &evdev{role: "keys", want: inputDev.isKeyboard}
 )
 
 // A genuinely HELD key, which is what makes an app open its context menu.
@@ -676,6 +660,8 @@ func main() {
 	flag.StringVar(&dir, "dir", dir, "on-device install directory")
 	flag.StringVar(&advIP, "ip", advIP, "IP advertised over mDNS (empty = autodetect)")
 	flag.StringVar(&mdnsHost, "mdns-host", mdnsHost, "mDNS name, advertised as <name>.local")
+	flag.StringVar(&mo.prefer, "pointer-name", "", "exact input device name for the pointer (default: autodetect by capability)")
+	flag.StringVar(&kb.prefer, "key-name", "", "exact input device name for key injection (default: autodetect by capability)")
 	flag.Parse()
 
 	if advIP == "" {

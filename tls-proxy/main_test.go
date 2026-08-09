@@ -25,57 +25,6 @@ func TestEvLayout(t *testing.T) {
 	}
 }
 
-// Real /proc/bus/input/devices layout from the projector: the pointer and the
-// remote's key receiver are different nodes, and both are resolved by name
-// because the event numbers move across reboots.
-const inputDevices = `I: Bus=0000 Vendor=0001 Product=0001 Version=0100
-N: Name="Hi keyboard"
-H: Handlers=kbd event0
-I: Bus=0000 Vendor=0001 Product=0002 Version=0100
-N: Name="Hi mouse"
-P: Phys=
-H: Handlers=mouse0 event1
-B: EV=7
-I: Bus=0006 Vendor=046d Product=0002 Version=0000
-N: Name="Hi Keypad"
-H: Handlers=kbd event4
-`
-
-func TestParseDevices(t *testing.T) {
-	for _, c := range []struct{ name, want string }{
-		{"Hi mouse", "/dev/input/event1"},
-		{"Hi keyboard", "/dev/input/event0"},
-		{"Hi Keypad", "/dev/input/event4"},
-	} {
-		got, err := parseDevices(inputDevices, c.name)
-		if err != nil {
-			t.Errorf("%s: %v", c.name, err)
-			continue
-		}
-		if got != c.want {
-			t.Errorf("%s -> %q, want %q", c.name, got, c.want)
-		}
-	}
-
-	// Handlers can list the event node first, in which case the field carries
-	// the "Handlers=" prefix.
-	got, err := parseDevices("N: Name=\"Hi mouse\"\nH: Handlers=event7 mouse0\n", "Hi mouse")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "/dev/input/event7" {
-		t.Fatalf("got %q, want /dev/input/event7", got)
-	}
-
-	if _, err := parseDevices(inputDevices, "No Such Device"); err == nil {
-		t.Fatal("expected an error when the named node does not exist")
-	}
-	// a name must not match a different device's line by prefix
-	if p, err := parseDevices(inputDevices, "Hi key"); err == nil {
-		t.Errorf(`"Hi key" matched %q, want no match (names are exact)`, p)
-	}
-}
-
 // The held-OK press is a key DOWN then a key UP on the keyboard node; pin the
 // encoding of both, since a missing UP would wedge the projector's UI.
 func TestHeldKeyEncoding(t *testing.T) {
