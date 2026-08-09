@@ -1,13 +1,17 @@
-// HTTPS front end for the projector remote.
+// Self-contained HTTPS server for the Android TV web remote.
 //
 // Three jobs:
-//  1. Terminates TLS on :8443 -> busybox httpd on 127.0.0.1:8790 (the CGIs).
-//  2. Gates every request on a shared token, because the CGIs inject key events
-//     as root and anything on the WiFi can reach this port.
-//  3. Injects pointer events itself, natively. The `m` CGI cost ~5 fork+execs
-//     per move batch (sh -> cat -> three sendevents) on a 1.0 GHz ARMv7; that
-//     was the air-mouse jitter. Here the evdev fd stays open and a move is one
-//     48-byte write.
+//  1. Terminates TLS and serves the entire UI from this one binary. The page is
+//     embedded, so there is no document root and no busybox dependency -- which
+//     is both what makes it portable and what makes the old "httpd -h <dir>
+//     serves key.pem" hazard structurally impossible.
+//  2. Gates every request on a shared token, because this injects input as root
+//     and anything on the WiFi can reach the port.
+//  3. Injects pointer and held-key events straight to evdev. The old `m` CGI
+//     cost ~5 fork+execs per move batch (sh -> cat -> three sendevents) on a
+//     1.0 GHz ARMv7; that was the air-mouse jitter. Here the fd stays open and
+//     a move is one 48-byte write. Discrete keys still go via Android's
+//     `input`, where one fork per press is not noticeable.
 //
 // Plaintext HTTP that lands on :8443 gets a 301 to https:// -- except /ca.crt,
 // which is served in the clear because the phone cannot trust our TLS until it
@@ -21,6 +25,7 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"crypto/tls"
+	_ "embed" // for the //go:embed directive on indexHTML
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -30,8 +35,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -50,7 +53,6 @@ import (
 // still runnable by hand for debugging.
 var (
 	listen   = ":8443"
-	backend  = "http://127.0.0.1:8790"
 	dir      = "/data/local/tmp/tvremote"
 	advIP    = "" // advertised over mDNS; empty = autodetect this host's LAN IP
 	mdnsHost = "projectorremote"
@@ -299,12 +301,12 @@ func holdKey(d *evdev, code uint16, dur time.Duration) error {
 	return nil
 }
 
-// keys serves /cgi-bin/k. Only the held variant is native; every plain keycode
-// still goes to the CGI unchanged.
-func keys(cgi http.Handler) http.Handler {
+// keys serves /cgi-bin/k. The held variant goes to evdev; every other key is an
+// `input keyevent`.
+func keys() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.RawQuery != "long_ok" {
-			cgi.ServeHTTP(w, r)
+			plainKey(w, r.URL.RawQuery)
 			return
 		}
 		if err := holdKey(kb, keyEnter, holdDur); err != nil {
@@ -320,9 +322,9 @@ func keys(cgi http.Handler) http.Handler {
 
 const relMax = 2000 // a single batch should never exceed a screen; reject abuse
 
-// pointer serves /cgi-bin/m for the three air-mouse ops. `tap`/`swipe` still
-// need the `input` binary, so those fall through to the CGI unchanged.
-func pointer(cgi http.Handler) http.Handler {
+// pointer serves /cgi-bin/m. The three air-mouse ops are written straight to
+// evdev; `tap`/`swipe` need the `input` binary and are handled in input.go.
+func pointer() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		op, val, _ := strings.Cut(r.URL.RawQuery, "=")
 		var err error
@@ -352,7 +354,7 @@ func pointer(cgi http.Handler) http.Handler {
 				ev(evKey, btnLeft, 1), ev(evSyn, synReport, 0),
 				ev(evKey, btnLeft, 0), ev(evSyn, synReport, 0))
 		default:
-			cgi.ServeHTTP(w, r) // tap / swipe / anything else
+			tapSwipe(w, op, val) // tap / swipe / anything else
 			return
 		}
 		if err != nil {
@@ -480,7 +482,7 @@ var al = &appList{}
 // labels (?cine, ?vlc, ?just, ?next, ?set) still fall through to the CGI, which
 // is also where Settings lives -- it has no launcher activity on this build and
 // so cannot come from the list.
-func apps(cgi http.Handler) http.Handler {
+func apps() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.RawQuery == "list":
@@ -514,32 +516,41 @@ func apps(cgi http.Handler) http.Handler {
 				http.Error(w, "launch failed", http.StatusInternalServerError)
 			}
 
+		case r.URL.RawQuery == "set":
+			openSettings(w)
+
 		default:
-			cgi.ServeHTTP(w, r)
+			http.Error(w, "unknown app request", http.StatusBadRequest)
 		}
 	})
 }
 
 // ---------------------------------------------------------------- routing
 
-// routes allowlists what the backend may serve.
+// indexHTML is compiled into the binary. Nothing is served off the filesystem,
+// so the install directory holding key.pem and token is not a document root at
+// all -- the previous design's central hazard cannot recur by accident.
 //
-// busybox httpd is started with -h <install dir>, so it will happily serve
-// everything in there: key.pem (the TLS private key), token (this gate's own
-// secret), boot.sh, the logs, the proxy binary. File modes don't help -- httpd
-// runs as root. So only the paths the UI actually uses are proxied; anything
-// else is a 404 even with a valid cookie.
-func routes(cgi http.Handler) *http.ServeMux {
+//go:embed ui/index.html
+var indexHTML []byte
+
+// routes is the complete surface. Every path is handled in-process; there is no
+// backend to proxy to and no static file root.
+func routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	// Patterns without a trailing slash are exact matches in ServeMux.
-	mux.Handle("/cgi-bin/m", pointer(cgi)) // rel/click/wheel native, tap/swipe fall through
-	mux.Handle("/cgi-bin/k", keys(cgi))    // held OK is native, plain keys fall through
-	mux.Handle("/cgi-bin/t", cgi)          // text
-	mux.Handle("/cgi-bin/a", apps(cgi))    // app list + launch-by-package, shortcuts fall through
+	mux.Handle("/cgi-bin/m", pointer()) // rel/click/wheel evdev, tap/swipe via `input`
+	mux.Handle("/cgi-bin/k", keys())    // held OK evdev, plain keys via `input`
+	mux.Handle("/cgi-bin/t", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		typeText(w, r.URL.RawQuery)
+	}))
+	mux.Handle("/cgi-bin/a", apps()) // list, launch-by-package, settings
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/", "/index.html":
-			cgi.ServeHTTP(w, r)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Content-Length", strconv.Itoa(len(indexHTML)))
+			w.Write(indexHTML)
 		default:
 			http.NotFound(w, r)
 		}
@@ -662,7 +673,6 @@ func lanIP() string {
 
 func main() {
 	flag.StringVar(&listen, "listen", listen, "HTTPS listen address, e.g. :8443")
-	flag.StringVar(&backend, "backend", backend, "loopback HTTP backend URL")
 	flag.StringVar(&dir, "dir", dir, "on-device install directory")
 	flag.StringVar(&advIP, "ip", advIP, "IP advertised over mDNS (empty = autodetect)")
 	flag.StringVar(&mdnsHost, "mdns-host", mdnsHost, "mDNS name, advertised as <name>.local")
@@ -674,10 +684,6 @@ func main() {
 
 	loadToken()
 
-	b, err := url.Parse(backend)
-	if err != nil {
-		log.Fatal(err)
-	}
 	cert, err := tls.LoadX509KeyPair(dir+"/cert.pem", dir+"/key.pem")
 	if err != nil {
 		log.Fatal(err)
@@ -705,11 +711,11 @@ func main() {
 		log.Printf("mDNS: %s.local -> %s:%d", mdnsHost, advIP, port)
 	}
 
-	srv := &http.Server{Handler: gate(routes(httputil.NewSingleHostReverseProxy(b)))}
+	srv := &http.Server{Handler: gate(routes())}
 	tlsLn := tls.NewListener(splitListener{ln}, &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
 	})
-	log.Printf("HTTPS %s -> %s (token gate on, native pointer, plaintext redirects)", listen, backend)
+	log.Printf("HTTPS %s (self-contained: token gate, embedded UI, native input)", listen)
 	log.Fatal(srv.Serve(tlsLn))
 }

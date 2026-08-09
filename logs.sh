@@ -4,7 +4,7 @@ set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib.sh"   # TV, IP, PORT, HTTPS, REMOTE
 adb_connect || echo "(running as shell, not root — some fields may be unreadable)"
 echo "== init.svc.tvremote =="; adb -s "$TV" shell getprop init.svc.tvremote
-echo "== listening $PORT(http)/$HTTPS(https)? =="; adb -s "$TV" shell "toybox netstat -ltn 2>/dev/null | grep -E \"$PORT|$HTTPS\" || echo none"
+echo "== listening $HTTPS(https)? (:$LEGACY_BACKEND_PORT should be absent) =="; adb -s "$TV" shell "toybox netstat -ltn 2>/dev/null | grep -E \"$HTTPS|$LEGACY_BACKEND_PORT\" || echo none"
 # -o ARGS is load-bearing: busybox httpd's process NAME is "busybox", so a bare
 # `ps -A` prints no line matching /httpd/ and this reads as "backend is dead"
 # while it is in fact serving. Match the full argv instead.

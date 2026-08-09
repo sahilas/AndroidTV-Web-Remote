@@ -27,3 +27,6 @@ artifacts/
 # Local config override (your device address) and its device-side copy.
 config.local.env
 device/config
+
+# stray output of a bare `go build` inside tls-proxy/
+tls-proxy/tlsproxy

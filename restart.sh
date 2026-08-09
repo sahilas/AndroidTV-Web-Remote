@@ -11,11 +11,10 @@ adb_connect || echo "!! not root — restart may fail if the service was install
 adb -s "$TV" shell "setprop ctl.restart tvremote 2>/dev/null; sleep 1; \
   if [ \"\$(getprop init.svc.tvremote)\" != running ]; then \
     pkill -f 'busybox httpd' 2>/dev/null; pkill -f tlsproxy 2>/dev/null; \
-    nohup setsid /vendor/bin/busybox httpd -f -p 127.0.0.1:$PORT -h $REMOTE </dev/null >$REMOTE/httpd.log 2>&1 & \
-    nohup setsid $REMOTE/bin/tlsproxy -listen :$HTTPS -backend http://127.0.0.1:$PORT -dir $REMOTE </dev/null >$REMOTE/proxy.log 2>&1 & fi"
+    nohup setsid $REMOTE/bin/tlsproxy -listen :$HTTPS -dir $REMOTE </dev/null >$REMOTE/proxy.log 2>&1 & fi"
 sleep 2
 tok=$(adb -s "$TV" shell "cat $REMOTE/token 2>/dev/null" | tr -d '\r\n' || true)
 code(){ local c; c=$(curl -sk -m6 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null) || c=000; echo "${c:-000}"; }
 echo "init.svc.tvremote = $(adb -s "$TV" shell getprop init.svc.tvremote | tr -d '\r')"
 echo "HTTPS (with token) = $(code -H "Cookie: tvr=$tok" "https://$IP:$HTTPS/")   (want 200)"
-echo "backend on LAN     = $(code "http://$IP:$PORT/")   (want 000 = closed)"
+echo "stale busybox      = $(code "http://$IP:$LEGACY_BACKEND_PORT/")   (want 000 = gone)"

@@ -15,7 +15,8 @@ HERE="$_LIBDIR"
 TV="$TV_ADDR"
 IP="${TV%:*}"          # adb endpoint minus the port
 HTTPS="$HTTPS_PORT"
-PORT="$BACKEND_PORT"
+# Only used to assert the pre-embed busybox backend is gone; see deploy.sh.
+LEGACY_BACKEND_PORT=8790
 REMOTE="$REMOTE_DIR"
 
 if [ -z "$IP" ] || [ "$IP" = "$TV" ]; then

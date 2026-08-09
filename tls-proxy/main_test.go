@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -152,75 +153,133 @@ func TestGateExchangesTokenForCookie(t *testing.T) {
 	}
 }
 
-// The backend serves the whole install dir. A valid cookie must NOT be enough to
-// pull the TLS key, the token itself, or the logs back out of it.
-func TestRoutesDoNotExposeTheInstallDir(t *testing.T) {
+// Nothing is served off the filesystem any more, so the install dir holding
+// key.pem and the token is not a document root at all. This test is what stops
+// somebody reintroducing a static file handler over it.
+func TestRoutesServeNoFilesystemPath(t *testing.T) {
 	token = "s3cret"
 	defer func() { token = "" }()
 
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTeapot) // marker: reached the busybox backend
-	})
-	h := gate(routes(backend))
+	h := gate(routes())
 	c := &http.Cookie{Name: cookie, Value: token}
 
-	get := func(path string) int {
+	get := func(path string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("GET", path, nil)
 		r.AddCookie(c)
 		h.ServeHTTP(w, r)
-		return w.Code
+		return w
 	}
 
 	for _, path := range []string{
 		"/key.pem", "/token", "/cert.pem", "/boot.sh", "/boot.log",
-		"/httpd.log", "/bin/tlsproxy", "/cgi-bin/",
+		"/httpd.log", "/bin/tlsproxy", "/cgi-bin/", "/config",
 	} {
-		if got := get(path); got != http.StatusNotFound {
-			t.Errorf("%s: got %d, want 404 (must not be proxied to the backend)", path, got)
+		if got := get(path).Code; got != http.StatusNotFound {
+			t.Errorf("%s: got %d, want 404", path, got)
 		}
 	}
 
 	// ServeMux cleans a traversal and 301s to the cleaned path, which then hits
-	// the 404 branch. What matters is that it never reaches the backend.
-	if got := get("/cgi-bin/k/../../token"); got == http.StatusTeapot {
-		t.Error("path traversal reached the backend")
-	} else if got != http.StatusMovedPermanently {
+	// the 404 branch. What matters is that it never yields content.
+	if got := get("/cgi-bin/k/../../token").Code; got != http.StatusMovedPermanently && got != http.StatusNotFound {
 		t.Errorf("traversal: got %d, want 301 to the cleaned path or 404", got)
 	}
 
-	for _, path := range []string{"/", "/index.html", "/cgi-bin/k?power", "/cgi-bin/t?hi", "/cgi-bin/a?vlc"} {
-		if got := get(path); got != http.StatusTeapot {
-			t.Errorf("%s: got %d, want it proxied to the backend", path, got)
+	// The UI is the one thing that IS served, and from memory rather than disk.
+	for _, path := range []string{"/", "/index.html"} {
+		w := get(path)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s: got %d, want 200", path, w.Code)
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte("<html")) {
+			t.Errorf("%s did not serve the embedded page", path)
 		}
 	}
 }
 
-// long_ok must be handled natively. If it ever fell through to the CGI it would
-// get a 400 there and the hold gesture would be a silently dead button.
-func TestLongOkIsHandledNatively(t *testing.T) {
-	reached := ""
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached = r.URL.RawQuery
-	})
-	h := keys(backend)
+// The embedded page must actually be embedded. An empty or truncated blob still
+// compiles and still 200s -- it just serves a blank remote.
+func TestEmbeddedUIIsPresent(t *testing.T) {
+	if len(indexHTML) < 1000 {
+		t.Fatalf("embedded index.html is %d bytes, expected the real page", len(indexHTML))
+	}
+	for _, want := range []string{"cgi-bin/k?", "cgi-bin/m?rel=", "cgi-bin/a?list"} {
+		if !bytes.Contains(indexHTML, []byte(want)) {
+			t.Errorf("embedded page does not reference %q -- UI and server are out of sync", want)
+		}
+	}
+}
+
+// long_ok goes to evdev; everything else to `input`. An unknown name must 400
+// rather than being passed to the injector.
+func TestKeyRouting(t *testing.T) {
+	h := keys()
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/cgi-bin/k?long_ok", nil))
-	if reached != "" {
-		t.Errorf("long_ok fell through to the CGI as %q", reached)
-	}
 	// No evdev node on the test host, so it must fail loudly rather than lie.
 	if w.Code == http.StatusOK {
 		t.Error("long_ok reported success with no input node available")
 	}
 
-	// every plain key still goes to the CGI untouched
-	for _, q := range []string{"ok", "power", "volup", "rewind"} {
-		reached = ""
-		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/cgi-bin/k?"+q, nil))
-		if reached != q {
-			t.Errorf("%q did not reach the CGI (got %q)", q, reached)
+	// Includes shapes that would matter if this were ever concatenated into a
+	// shell command rather than passed as an argv element.
+	for _, q := range []string{"bogus", "", "keyevent%2026", "26", "ok;reboot", "ok%26reboot"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "/cgi-bin/k?"+q, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%q: got %d, want 400 (unknown key must not reach the injector)", q, w.Code)
+		}
+	}
+
+	// Names the UI sends must all resolve. A missing entry here is a dead button.
+	for _, q := range []string{"up", "down", "left", "right", "ok", "back", "home",
+		"menu", "power", "volup", "voldown", "mute", "play", "prev", "next",
+		"rewind", "ff", "del", "enter", "space", "search"} {
+		if _, found := keyCodes[q]; !found {
+			t.Errorf("keyCodes is missing %q, which the UI sends", q)
+		}
+	}
+}
+
+// decodeQuery has to stay forgiving: the shell CGI passed malformed escapes
+// through, and turning a stray '%' into a 400 would break typing mid-word.
+func TestDecodeQuery(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"hello", "hello"},
+		{"a+b", "a b"},
+		{"a%20b", "a b"},
+		{"%41%42", "AB"},
+		{"100%", "100%"},      // trailing bare percent, not an error
+		{"%zz", "%zz"},        // invalid hex passes through
+		{"a%2", "a%2"},        // truncated escape passes through
+		{"caf%C3%A9", "café"}, // utf-8 survives byte-wise decoding
+	} {
+		if got := decodeQuery(c.in); got != c.want {
+			t.Errorf("decodeQuery(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// tap/swipe take numbers straight off the network, so the validation is the
+// only thing between a request and an `input` argv.
+func TestTapSwipeValidation(t *testing.T) {
+	bad := []struct{ op, val string }{
+		{"tap", "1"},             // too few
+		{"tap", "1,2,3"},         // too many
+		{"tap", "a,2"},           // non-numeric
+		{"tap", "-1,2"},          // negative
+		{"tap", "99999,2"},       // absurd
+		{"swipe", "1,2,3"},       // too few
+		{"swipe", "1,2,3,4,5,6"}, // too many
+		{"bogus", "1,2"},         // unknown op
+	}
+	for _, c := range bad {
+		w := httptest.NewRecorder()
+		tapSwipe(w, c.op, c.val)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s=%s: got %d, want 400", c.op, c.val, w.Code)
 		}
 	}
 }
